@@ -1,4 +1,4 @@
-async function createImageThumbnail(file: File, targetWidth: number, targetHeight: number, type = 'image/jpeg', quality = 0.8): Promise<Blob | null> {
+async function createImageThumbnail(file: File, targetWidth: number, targetHeight: number, type = "image/jpeg", quality = 0.8): Promise<Blob | null> {
   try {
     const imageBitmap = await createImageBitmap(file);
 
@@ -33,10 +33,10 @@ async function createImageThumbnail(file: File, targetWidth: number, targetHeigh
     // offsetY = (targetHeight - drawHeight) / 2; G
 
     const canvas = new OffscreenCanvas(targetWidth, targetHeight);
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
 
     if (!ctx) {
-      throw new Error('Unable to get OffscreenCanvas context');
+      throw new Error("Unable to get OffscreenCanvas context");
     }
 
     // 可选：填充背景色，如果缩略图可能包含透明区域或留白
@@ -52,7 +52,7 @@ async function createImageThumbnail(file: File, targetWidth: number, targetHeigh
 
     return thumbnailBlob;
   } catch (error) {
-    console.error('Error creating thumbnail in worker:', error);
+    console.error("Error creating thumbnail in worker:", error);
     return null; // 保持和 Promise<Blob | null> 类型一致
   }
 }
@@ -71,7 +71,7 @@ self.onmessage = async (event: MessageEvent<WorkerEventData>) => {
     if (thumbnailBlob) {
       self.postMessage({ thumbnail: thumbnailBlob, error: null });
     } else {
-      self.postMessage({ thumbnail: null, error: 'Failed to create thumbnail in worker' });
+      self.postMessage({ thumbnail: null, error: "Failed to create thumbnail in worker" });
     }
   } catch (e) {
     const error = e as Error;
