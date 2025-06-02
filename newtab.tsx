@@ -1,10 +1,10 @@
-import { Drawer, Dropdown } from "antd";
 import { useAsyncEffect } from "ahooks";
-import { useCallback, useState } from "react";
+import { Drawer, Dropdown } from "antd";
 import { SettingOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useState } from "react";
 import { imageDb } from "~indexedDB/ImageDB";
 import { Setting } from "~components/Setting";
-import { newtabBackgroundImageId } from "~storage/wxt";
+import { BGIKey, local } from "~storage/local";
 import type { MenuProps } from "antd";
 import "./styles/main.css";
 
@@ -18,7 +18,7 @@ const items: MenuProps["items"] = [
 
 function IndexNewtab() {
   const [openSetting, setOpenSetting] = useState(false);
-  const [backgroundImageId, setBackgroundImageId] = useState<number>();
+  const [backgroundImageId, setBackgroundImageId] = useState<number | null>();
 
   const menuOnClick = useCallback<Required<MenuProps>["onClick"]>((info) => {
     if (info?.key === "setting") {
@@ -27,14 +27,24 @@ function IndexNewtab() {
   }, []);
 
   useAsyncEffect(async () => {
-    const value = await newtabBackgroundImageId.getValue();
-    setBackgroundImageId(value);
-    setBackground(value);
-    newtabBackgroundImageId.watch((newValue) => {
-      setBackgroundImageId(newValue);
-      setBackground(newValue);
+    const BGIId = await local.get<number>(BGIKey);
+    setBackgroundImageId(BGIId);
+    setBackground(BGIId);
+    local.watch({
+      [BGIKey]: (change) => {
+        const newValue = change?.newValue;
+        setBackgroundImageId(newValue);
+        setBackground(newValue);
+      }
     });
   }, []);
+
+  useEffect(
+    () => () => {
+      local.unwatchAll();
+    },
+    []
+  );
 
   return (
     <>
@@ -58,10 +68,16 @@ function IndexNewtab() {
 
 export default IndexNewtab;
 
-async function setBackground(id: number) {
-  const currentImage = await imageDb.images.get(id);
-  if (currentImage?.file) {
-    const imageUrl = URL.createObjectURL(currentImage.file);
-    document.body.style.backgroundImage = `url(${imageUrl})`;
+async function setBackground(id?: number | null) {
+  if (typeof id !== "number") {
+    document.body.style.backgroundImage = "";
+    return;
   }
+  const currentImage = await imageDb.images.get(id);
+  if (currentImage === undefined) {
+    document.body.style.backgroundImage = "";
+    return;
+  }
+  const imageUrl = URL.createObjectURL(currentImage.file);
+  document.body.style.backgroundImage = `url(${imageUrl})`;
 }
