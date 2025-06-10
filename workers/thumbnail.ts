@@ -58,17 +58,54 @@ async function createImageThumbnail(file: FileType, targetWidth: number, targetH
 
 self.onmessage = async (event: MessageEvent<ThumbnailAcceptData>) => {
   const { file, targetWidth = 120, targetHeight = 120 } = event.data;
-
   const thumbnailBlob = await createImageThumbnail(file, targetWidth, targetHeight);
-
-  const id = await imageDb.images.add({
-    file
-  });
-
-  // 将缩略图存入 thumbnails 表，关联 images.id
-  // .put 因为 id 是已知的，如果用 .add 会认为 id 是自增的（除非表结构定义了 id 不是自增）
-  await imageDb.thumbnails.put({ id, thumbnail: thumbnailBlob });
-
+  const id = await setImageAndCleanUp(file);
+  await setThumbnailAndCleanUp(id, thumbnailBlob);
   const data: ThumbnailResponseData = { id };
   self.postMessage(data);
 };
+
+/**
+ * 确保 'images' 表中只存在一个图片记录，并用新文件更新它
+ * @param file - 图片文件
+ */
+async function setImageAndCleanUp(file: FileType) {
+  // 'rw' -> read-write transaction on the 'images' table.
+  const firstId = await imageDb.transaction("rw", imageDb.images, async () => {
+    // 1. 获取所有主键，这非常快，因为它不加载数据。
+    const allKeys = await imageDb.images.orderBy("id").keys();
+    if (allKeys.length === 0) {
+      const newId = await imageDb.images.add({
+        file
+      });
+      return newId;
+    }
+    const idToKeep = allKeys[0] as number;
+    const idsToDelete = allKeys.slice(1) as number[];
+    // 更新第一条
+    await imageDb.images.update(idToKeep, { file });
+    if (idsToDelete.length > 0) {
+      await imageDb.images.bulkDelete(idsToDelete);
+    }
+    return idToKeep;
+  });
+  // 事务成功后，firstId 变量将获得返回的值
+  return firstId;
+}
+
+/**
+ * 清空 thumbnails 表，并存入一个全新的缩略图。
+ * 整个操作是原子的，要么全部成功，要么全部失败。
+ * @param id - 新缩略图的已知 ID
+ * @param thumbnail - 新缩略图的 Blob 数据
+ */
+async function setThumbnailAndCleanUp(id: number, thumbnail: Blob) {
+  // 使用 'rw' (read-write) 模式开启一个事务，并锁定 'thumbnails' 表
+  await imageDb.transaction("rw", imageDb.thumbnails, async () => {
+    // 步骤 1: 清空整个表。这是最高效的删除所有内容的方式。
+    await imageDb.thumbnails.clear();
+    // 将缩略图存入 thumbnails 表，关联 images.id
+    // .put 因为 id 是已知的，如果用 .add 会认为 id 是自增的（除非表结构定义了 id 不是自增）
+    await imageDb.thumbnails.put({ id, thumbnail });
+  });
+}

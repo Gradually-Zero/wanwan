@@ -1,23 +1,10 @@
-import {
-  EyeOutlined,
-  PlusOutlined,
-  LeftOutlined,
-  UndoOutlined,
-  RightOutlined,
-  ZoomInOutlined,
-  DeleteOutlined,
-  ZoomOutOutlined,
-  DownloadOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined
-} from "@ant-design/icons";
-import { Image, Upload, Flex, Space } from "antd";
+import { PlusOutlined } from "@ant-design/icons";
+import { Image, Upload, Flex, Button } from "antd";
 import { useCallback, useEffect, useState, useRef } from "react";
 import { setBGIId } from "~storage/local";
 import { imageDb } from "~indexedDB/ImageDB";
 import type { BeforeUpload } from "~interface";
 import type { ThumbnailAcceptData, ThumbnailResponseData } from "~workers/thumbnailType";
-import * as lessStyle from "./Setting.module.less";
 
 interface DisplayedImage {
   id: number;
@@ -30,121 +17,82 @@ interface SettingProps {
 
 export function Setting(props: SettingProps) {
   const { backgroundImageId } = props;
-  const [previewVisible, setPreviewVisible] = useState(false);
-  const [displayedImages, setDisplayedThumbnails] = useState<DisplayedImage[]>([]);
-  const [activePreviewIndex, setActivePreviewIndex] = useState(0);
-  const [activePreviewOriginalUrl, setActivePreviewOriginalUrl] = useState<string | undefined>(undefined);
-  const [isOriginalLoading, setIsOriginalLoading] = useState(false);
-  const currentThumbnailObjectUrlsRef = useRef<string[]>([]);
-  const currentOriginalObjectUrlRef = useRef<string | undefined>(undefined);
+  const [imageTotal, setImageTotal] = useState<number>();
+  const [thumbnail, setThumbnail] = useState<DisplayedImage>();
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string>();
+  const currentImageObjectUrlRef = useRef<string>();
+  const currentThumbnailObjectUrlRef = useRef<string>();
 
   const fetchThumbnails = useCallback(async () => {
     try {
-      // 对之前创建的 Object URL 进行一次性释放
-      currentThumbnailObjectUrlsRef.current.forEach(URL.revokeObjectURL);
-      // 重置 objectUrls
-      const objectUrls: string[] = [];
-      const newDisplayedImages: DisplayedImage[] = [];
-      const offset = 0;
-      const limit = 10;
       const imageTotal = await imageDb.images.count();
-      const imageIds = await imageDb.images
+      setImageTotal(imageTotal);
+      const imageIds = (await imageDb.images
         .orderBy("id") // 使用 id 索引排序
-        .offset(offset) // 跳过指定数量的记录
-        .limit(limit) // 限制返回的记录数
-        .keys(); // 仅获取主键（id），不加载图片数据
-      const numberIds = imageIds.filter((id) => typeof id === "number");
-      const thumbnailResult = await imageDb.thumbnails.bulkGet(numberIds);
-      const thumbnails = thumbnailResult.map((item, index) => {
-        if (item === undefined) {
-          const temp = { id: numberIds[index], thumbnail: undefined };
-          return temp;
+        .limit(1) // 限制返回的记录数
+        .keys()) as number[]; // 仅获取主键（id），不加载图片数据
+      if (imageIds.length === 1) {
+        const imageId = imageIds[0];
+        const thumbnailResult = await imageDb.thumbnails.get(imageId);
+        if (currentThumbnailObjectUrlRef.current) {
+          URL.revokeObjectURL(currentThumbnailObjectUrlRef.current);
         }
-        return item;
-      });
-
-      thumbnails.forEach((item) => {
-        const id = item.id;
-        const thumbnail = item?.thumbnail;
-        if (thumbnail) {
-          const url = URL.createObjectURL(thumbnail);
-          newDisplayedImages.push({ id, thumbnailUrl: url });
-          // 只有真实的 Object URL 才需要跟踪释放
-          objectUrls.push(url);
+        let temp;
+        if (thumbnailResult) {
+          const url = URL.createObjectURL(thumbnailResult.thumbnail);
+          currentThumbnailObjectUrlRef.current = url;
+          temp = { id: thumbnailResult.id, thumbnailUrl: url };
         } else {
-          newDisplayedImages.push({ id, thumbnailUrl: defaultThumbnailUrl });
+          temp = { id: imageId, thumbnailUrl: defaultThumbnailUrl };
         }
-      });
-      setDisplayedThumbnails(newDisplayedImages);
-      // 只存储需要释放的 Object URL
-      currentThumbnailObjectUrlsRef.current = objectUrls;
+        setThumbnail(temp);
+      } else {
+        setThumbnail(undefined);
+      }
     } catch (err) {
       console.error("Error fetching thumbnails from IndexedDB:", err);
-      currentThumbnailObjectUrlsRef.current.forEach(URL.revokeObjectURL);
-      currentThumbnailObjectUrlsRef.current = [];
-      setDisplayedThumbnails([]);
+      if (currentThumbnailObjectUrlRef.current) {
+        URL.revokeObjectURL(currentThumbnailObjectUrlRef.current);
+      }
+      currentThumbnailObjectUrlRef.current = undefined;
+      setThumbnail(undefined);
     }
-  }, [currentThumbnailObjectUrlsRef, setDisplayedThumbnails]);
+  }, []);
 
   useEffect(() => {
     fetchThumbnails();
     return () => {
-      currentThumbnailObjectUrlsRef.current.forEach(URL.revokeObjectURL);
-      if (currentOriginalObjectUrlRef.current) {
-        URL.revokeObjectURL(currentOriginalObjectUrlRef.current);
+      if (currentThumbnailObjectUrlRef.current) {
+        URL.revokeObjectURL(currentThumbnailObjectUrlRef.current);
+      }
+      if (currentImageObjectUrlRef.current) {
+        URL.revokeObjectURL(currentImageObjectUrlRef.current);
       }
     };
   }, [fetchThumbnails]);
 
-  useEffect(() => {
-    if (previewVisible && displayedImages.length > 0 && activePreviewIndex < displayedImages.length) {
-      const loadImage = async () => {
-        if (currentOriginalObjectUrlRef.current) {
-          URL.revokeObjectURL(currentOriginalObjectUrlRef.current);
-          currentOriginalObjectUrlRef.current = undefined;
-          setActivePreviewOriginalUrl(undefined);
-        }
-
-        setIsOriginalLoading(true);
-        try {
-          const currentImageId = displayedImages[activePreviewIndex]?.id;
-          if (currentImageId === undefined) {
-            console.error("No image at active index:", activePreviewIndex);
-            setIsOriginalLoading(false);
-            return;
-          }
-          const imageRecord = await imageDb.images.get(currentImageId);
-          if (imageRecord?.file) {
-            const originalUrl = URL.createObjectURL(imageRecord.file);
-            setActivePreviewOriginalUrl(originalUrl);
-            currentOriginalObjectUrlRef.current = originalUrl;
-          } else {
-            console.warn("Original image file not found for id:", currentImageId, "Falling back to thumbnail for preview.");
-            // 如果原始图片文件未找到或 imageRecord 未定义，则回退到使用缩略图进行预览
-            setActivePreviewOriginalUrl(displayedImages[activePreviewIndex]?.thumbnailUrl);
-          }
-        } catch (error) {
-          console.error("Error loading original image:", error);
-          // 出现错误时回退到使用缩略图
-          setActivePreviewOriginalUrl(displayedImages[activePreviewIndex]?.thumbnailUrl);
-        } finally {
-          setIsOriginalLoading(false);
-        }
-      };
-      loadImage();
-    } else {
-      // 预览关闭时进行清理
-      if (currentOriginalObjectUrlRef.current) {
-        URL.revokeObjectURL(currentOriginalObjectUrlRef.current);
-        currentOriginalObjectUrlRef.current = undefined;
-        setActivePreviewOriginalUrl(undefined);
+  const handleVisibleChange = async (visible: boolean) => {
+    if (visible && thumbnail?.id) {
+      if (currentImageObjectUrlRef.current) {
+        URL.revokeObjectURL(currentImageObjectUrlRef.current);
+        currentImageObjectUrlRef.current = undefined;
       }
-      setIsOriginalLoading(false);
+      const imageId = thumbnail?.id;
+      const imageRecord = await imageDb.images.get(imageId);
+      if (imageRecord?.file) {
+        const imageUrl = URL.createObjectURL(imageRecord.file);
+        setImagePreviewUrl(imageUrl);
+        currentImageObjectUrlRef.current = imageUrl;
+      } else {
+        console.warn("Original image file not found for id:", imageId, "Falling back to thumbnail for preview.");
+      }
+      return;
     }
-  }, [previewVisible, activePreviewIndex, displayedImages]);
-
-  const handleVisibleChange = (visible: boolean) => {
-    setPreviewVisible(visible);
+    if (currentImageObjectUrlRef.current) {
+      URL.revokeObjectURL(currentImageObjectUrlRef.current);
+      currentImageObjectUrlRef.current = undefined;
+    }
+    setImagePreviewUrl(undefined);
   };
 
   const beforeUpload = useCallback<BeforeUpload>(
@@ -183,134 +131,61 @@ export function Setting(props: SettingProps) {
   };
 
   const handleDownload = async () => {
-    if (displayedImages.length > 0 && activePreviewIndex >= 0) {
-      const imageId = displayedImages?.[activePreviewIndex]?.id;
+    if (thumbnail?.id) {
+      const imageId = thumbnail?.id;
       await handleDownloadSpecificImage(imageId);
     }
   };
 
-  const handleDeleteSpecificImage = async (imageId: number) => {
-    await imageDb.images.delete(imageId);
-    await imageDb.thumbnails.delete(imageId);
-    if (backgroundImageId === imageId) {
-      const firstImage = await imageDb.images.orderBy(":id").first();
-      setBGIId(firstImage?.id ?? 0);
+  const handleDelete = async () => {
+    if (thumbnail?.id) {
+      const imageId = thumbnail?.id;
+      await imageDb.images.delete(imageId);
+      await imageDb.thumbnails.delete(imageId);
+      if (backgroundImageId === imageId) {
+        setBGIId(null);
+      }
+      fetchThumbnails();
     }
-    fetchThumbnails();
+  };
+
+  const handleSet = () => {
+    if (thumbnail?.id) {
+      const imageId = thumbnail?.id;
+      setBGIId(imageId);
+    }
+  };
+
+  const handleUnset = () => {
+    setBGIId(null);
   };
 
   return (
     <>
       <Flex wrap="wrap" gap="middle">
+        {thumbnail ? (
+          <Image
+            src={thumbnail?.thumbnailUrl}
+            width={102}
+            height={102}
+            preview={{
+              onVisibleChange: handleVisibleChange,
+              src: imagePreviewUrl
+            }}
+          />
+        ) : null}
         <Upload accept="image/*," beforeUpload={beforeUpload} listType="picture-card">
           <button style={{ border: 0, background: "none" }} type="button">
             <PlusOutlined />
-            <div style={{ marginTop: 8 }}>Upload</div>
+            <div style={{ marginTop: 8 }}>{imageTotal === 0 ? "选择本地图片" : "替换当前图片"}</div>
           </button>
         </Upload>
-        <Image.PreviewGroup
-          items={displayedImages.map((image) => image.thumbnailUrl)} // 用于控制工具栏中的图片数量
-          preview={{
-            visible: previewVisible,
-            src: activePreviewOriginalUrl, // 动态设置预览的 src
-            current: activePreviewIndex,
-            onChange: (current) => setActivePreviewIndex(current),
-            onVisibleChange: handleVisibleChange,
-            toolbarRender: (_, { transform: { scale }, actions: { onActive, onZoomOut, onZoomIn, onReset } }) => (
-              <Space size={12} className={lessStyle["toolbar-wrapper"]}>
-                <LeftOutlined onClick={() => onActive?.(-1)} />
-                <RightOutlined onClick={() => onActive?.(1)} />
-                <DownloadOutlined onClick={handleDownload} />
-                <ZoomOutOutlined disabled={scale === 1 || isOriginalLoading} onClick={onZoomOut} />
-                <ZoomInOutlined disabled={scale === 50 || isOriginalLoading} onClick={onZoomIn} />
-                <UndoOutlined disabled={isOriginalLoading} onClick={onReset} />
-              </Space>
-            )
-          }}>
-          {displayedImages.map((image, index) => {
-            const isSelected = image.id === backgroundImageId;
-            return (
-              <Image
-                key={image.id}
-                src={image.thumbnailUrl} // 网格中始终显示缩略图
-                width={100}
-                height={100}
-                style={{
-                  objectFit: "cover",
-                  border: isSelected ? "2px solid #1890ff" : "2px solid transparent", // 高亮选中项
-                  padding: "2px" // 为边框留出空间，避免内容跳动
-                }}
-                preview={{
-                  // 单个图片的预览被禁用，由 PreviewGroup 控制
-                  visible: false,
-                  mask: (
-                    <Space
-                      direction="vertical"
-                      size={8}
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        justifyContent: "center",
-                        alignItems: "center",
-                        width: "100%",
-                        height: "100%",
-                        backgroundColor: "rgba(0, 0, 0, 0.6)", // 加深一点背景以便看清白色图标
-                        userSelect: "none"
-                      }}
-                      onClick={(e) => {
-                        // 点击遮罩背景区域时，阻止事件冒泡
-                        e.stopPropagation();
-                      }}>
-                      <Space direction="horizontal" size={16}>
-                        <DownloadOutlined
-                          title="下载"
-                          style={{ color: "white", fontSize: "18px", cursor: "pointer" }}
-                          onClick={() => {
-                            handleDownloadSpecificImage(image.id);
-                          }}
-                        />
-                        <EyeOutlined
-                          title="预览"
-                          style={{ color: "white", fontSize: "18px", cursor: "pointer" }}
-                          onClick={() => {
-                            setActivePreviewIndex(index);
-                            setPreviewVisible(true);
-                          }}
-                        />
-                      </Space>
-                      <Space direction="horizontal" size={16} style={{ marginTop: "8px" }}>
-                        <DeleteOutlined
-                          title="删除"
-                          style={{ color: "white", fontSize: "18px", cursor: "pointer" }}
-                          onClick={() => {
-                            handleDeleteSpecificImage(image.id);
-                          }}
-                        />
-                        {isSelected ? (
-                          <CloseCircleOutlined
-                            title="取消设为背景"
-                            style={{ color: "white", fontSize: "18px", cursor: "pointer" }}
-                            onClick={async () => {
-                              setBGIId(null);
-                            }}
-                          />
-                        ) : (
-                          <CheckCircleOutlined
-                            title="设为背景"
-                            style={{ color: "white", fontSize: "18px", cursor: "pointer" }}
-                            onClick={async () => {
-                              setBGIId(image.id);
-                            }}
-                          />
-                        )}
-                      </Space>
-                    </Space>
-                  )
-                }}
-              />
-            );
-          })}
-        </Image.PreviewGroup>
+        <Flex gap="small">
+          <Button onClick={handleDownload}>下载</Button>
+          <Button onClick={handleDelete}>删除</Button>
+          <Button onClick={handleSet}>设置</Button>
+          <Button onClick={handleUnset}>取消</Button>
+        </Flex>
       </Flex>
     </>
   );
