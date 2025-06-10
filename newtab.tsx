@@ -1,7 +1,7 @@
 import { useAsyncEffect } from "ahooks";
 import { Drawer, Dropdown } from "antd";
 import { SettingOutlined } from "@ant-design/icons";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { imageDb } from "~indexedDB/ImageDB";
 import { Setting } from "~components/Setting";
 import { BGIKey, local } from "~storage/local";
@@ -19,6 +19,7 @@ const items: MenuProps["items"] = [
 function IndexNewtab() {
   const [openSetting, setOpenSetting] = useState(false);
   const [backgroundImageId, setBackgroundImageId] = useState<number | null>();
+  const currentImageObjectUrlRef = useRef<string>();
 
   const menuOnClick = useCallback<Required<MenuProps>["onClick"]>((info) => {
     if (info?.key === "setting") {
@@ -29,12 +30,12 @@ function IndexNewtab() {
   useAsyncEffect(async () => {
     const BGIId = await local.get<number>(BGIKey);
     setBackgroundImageId(BGIId);
-    setBackground(BGIId);
+    setBackground(BGIId, currentImageObjectUrlRef);
     local.watch({
       [BGIKey]: (change) => {
         const newValue = change?.newValue;
         setBackgroundImageId(newValue);
-        setBackground(newValue);
+        setBackground(newValue, currentImageObjectUrlRef);
       }
     });
   }, []);
@@ -42,6 +43,9 @@ function IndexNewtab() {
   useEffect(
     () => () => {
       local.unwatchAll();
+      if (currentImageObjectUrlRef.current) {
+        URL.revokeObjectURL(currentImageObjectUrlRef.current);
+      }
     },
     []
   );
@@ -68,7 +72,7 @@ function IndexNewtab() {
 
 export default IndexNewtab;
 
-async function setBackground(id?: number | null) {
+async function setBackground(id?: number | null, currentImageObjectUrlRef?: React.MutableRefObject<string | undefined>) {
   if (typeof id !== "number") {
     document.body.style.backgroundImage = "";
     return;
@@ -79,5 +83,8 @@ async function setBackground(id?: number | null) {
     return;
   }
   const imageUrl = URL.createObjectURL(currentImage.file);
+  if (currentImageObjectUrlRef) {
+    currentImageObjectUrlRef.current = imageUrl;
+  }
   document.body.style.backgroundImage = `url(${imageUrl})`;
 }
