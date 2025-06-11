@@ -1,10 +1,10 @@
-import { useAsyncEffect } from "ahooks";
+import { useRequest } from "ahooks";
 import { Drawer, Dropdown } from "antd";
 import { SettingOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getBIS } from "~storage/local";
 import { imageDb } from "~indexedDB/ImageDB";
 import { Setting } from "~components/Setting";
-import { BGIKey, local } from "~storage/local";
 import type { MenuProps } from "antd";
 import "./styles/main.css";
 
@@ -18,8 +18,24 @@ const items: MenuProps["items"] = [
 
 function IndexNewtab() {
   const [openSetting, setOpenSetting] = useState(false);
-  const [backgroundImageId, setBackgroundImageId] = useState<number | null>();
   const currentImageObjectUrlRef = useRef<string>();
+  const { refresh } = useRequest(getImage, {
+    onBefore: () => {
+      if (currentImageObjectUrlRef.current) {
+        URL.revokeObjectURL(currentImageObjectUrlRef.current);
+      }
+    },
+    onSuccess: (data) => {
+      const file = data?.file;
+      if (file) {
+        const imageUrl = URL.createObjectURL(file);
+        currentImageObjectUrlRef.current = imageUrl;
+        document.body.style.backgroundImage = `url(${imageUrl})`;
+        return;
+      }
+      document.body.style.backgroundImage = "";
+    }
+  });
 
   const menuOnClick = useCallback<Required<MenuProps>["onClick"]>((info) => {
     if (info?.key === "setting") {
@@ -27,22 +43,8 @@ function IndexNewtab() {
     }
   }, []);
 
-  useAsyncEffect(async () => {
-    const BGIId = await local.get<number>(BGIKey);
-    setBackgroundImageId(BGIId);
-    setBackground(BGIId, currentImageObjectUrlRef);
-    local.watch({
-      [BGIKey]: (change) => {
-        const newValue = change?.newValue;
-        setBackgroundImageId(newValue);
-        setBackground(newValue, currentImageObjectUrlRef);
-      }
-    });
-  }, []);
-
   useEffect(
     () => () => {
-      local.unwatchAll();
       if (currentImageObjectUrlRef.current) {
         URL.revokeObjectURL(currentImageObjectUrlRef.current);
       }
@@ -64,7 +66,7 @@ function IndexNewtab() {
         onClose={() => {
           setOpenSetting(false);
         }}>
-        <Setting backgroundImageId={backgroundImageId} />
+        <Setting reloadBackground={refresh} />
       </Drawer>
     </>
   );
@@ -72,19 +74,10 @@ function IndexNewtab() {
 
 export default IndexNewtab;
 
-async function setBackground(id?: number | null, currentImageObjectUrlRef?: React.MutableRefObject<string | undefined>) {
-  if (typeof id !== "number") {
-    document.body.style.backgroundImage = "";
-    return;
+async function getImage() {
+  const biSwitch = await getBIS();
+  if (biSwitch) {
+    return imageDb.images.orderBy("id").first();
   }
-  const currentImage = await imageDb.images.get(id);
-  if (currentImage === undefined) {
-    document.body.style.backgroundImage = "";
-    return;
-  }
-  const imageUrl = URL.createObjectURL(currentImage.file);
-  if (currentImageObjectUrlRef) {
-    currentImageObjectUrlRef.current = imageUrl;
-  }
-  document.body.style.backgroundImage = `url(${imageUrl})`;
+  return undefined;
 }
