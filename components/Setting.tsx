@@ -1,8 +1,9 @@
+import { useRequest } from "ahooks";
 import { PlusOutlined } from "@ant-design/icons";
 import { Image, Upload, Flex, Button } from "antd";
 import { useCallback, useEffect, useState, useRef } from "react";
-import { setBGIId } from "~storage/local";
 import { imageDb } from "~indexedDB/ImageDB";
+import { getBIS, setBIS } from "~storage/local";
 import type { BeforeUpload } from "~interface";
 import type { ThumbnailAcceptData, ThumbnailResponseData } from "~workers/thumbnailType";
 
@@ -12,31 +13,26 @@ interface DisplayedImage {
 }
 
 interface SettingProps {
-  backgroundImageId?: number | null;
+  reloadBackground?: () => void;
 }
 
 export function Setting(props: SettingProps) {
-  const { backgroundImageId } = props;
-  const [imageTotal, setImageTotal] = useState<number>();
+  const { reloadBackground } = props;
   const [thumbnail, setThumbnail] = useState<DisplayedImage>();
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string>();
   const currentImageObjectUrlRef = useRef<string>();
   const currentThumbnailObjectUrlRef = useRef<string>();
 
-  const fetchThumbnails = useCallback(async () => {
-    try {
-      const imageTotal = await imageDb.images.count();
-      setImageTotal(imageTotal);
-      const imageIds = (await imageDb.images
-        .orderBy("id") // 使用 id 索引排序
-        .limit(1) // 限制返回的记录数
-        .keys()) as number[]; // 仅获取主键（id），不加载图片数据
-      if (imageIds.length === 1) {
-        const imageId = imageIds[0];
+  const { refresh } = useRequest(() => imageDb.images.orderBy("id").limit(1).keys(), {
+    onBefore: () => {
+      if (currentThumbnailObjectUrlRef.current) {
+        URL.revokeObjectURL(currentThumbnailObjectUrlRef.current);
+      }
+    },
+    onSuccess: async (data) => {
+      if (Array.isArray(data) && data?.length === 1 && typeof data[0] === "number") {
+        const imageId = data[0];
         const thumbnailResult = await imageDb.thumbnails.get(imageId);
-        if (currentThumbnailObjectUrlRef.current) {
-          URL.revokeObjectURL(currentThumbnailObjectUrlRef.current);
-        }
         let temp;
         if (thumbnailResult) {
           const url = URL.createObjectURL(thumbnailResult.thumbnail);
@@ -46,37 +42,18 @@ export function Setting(props: SettingProps) {
           temp = { id: imageId, thumbnailUrl: defaultThumbnailUrl };
         }
         setThumbnail(temp);
-      } else {
-        setThumbnail(undefined);
+        return;
       }
-    } catch (err) {
-      console.error("Error fetching thumbnails from IndexedDB:", err);
-      if (currentThumbnailObjectUrlRef.current) {
-        URL.revokeObjectURL(currentThumbnailObjectUrlRef.current);
-      }
-      currentThumbnailObjectUrlRef.current = undefined;
       setThumbnail(undefined);
     }
-  }, []);
-
-  useEffect(() => {
-    fetchThumbnails();
-    return () => {
-      if (currentThumbnailObjectUrlRef.current) {
-        URL.revokeObjectURL(currentThumbnailObjectUrlRef.current);
-      }
-      if (currentImageObjectUrlRef.current) {
-        URL.revokeObjectURL(currentImageObjectUrlRef.current);
-      }
-    };
-  }, [fetchThumbnails]);
+  });
 
   const handleVisibleChange = async (visible: boolean) => {
+    if (currentImageObjectUrlRef.current) {
+      URL.revokeObjectURL(currentImageObjectUrlRef.current);
+      currentImageObjectUrlRef.current = undefined;
+    }
     if (visible && thumbnail?.id) {
-      if (currentImageObjectUrlRef.current) {
-        URL.revokeObjectURL(currentImageObjectUrlRef.current);
-        currentImageObjectUrlRef.current = undefined;
-      }
       const imageId = thumbnail?.id;
       const imageRecord = await imageDb.images.get(imageId);
       if (imageRecord?.file) {
@@ -88,10 +65,6 @@ export function Setting(props: SettingProps) {
       }
       return;
     }
-    if (currentImageObjectUrlRef.current) {
-      URL.revokeObjectURL(currentImageObjectUrlRef.current);
-      currentImageObjectUrlRef.current = undefined;
-    }
     setImagePreviewUrl(undefined);
   };
 
@@ -101,9 +74,9 @@ export function Setting(props: SettingProps) {
         const worker = new Worker(new URL("../workers/thumbnail.ts", import.meta.url), { type: "module" });
 
         worker.onmessage = async (e: MessageEvent<ThumbnailResponseData>) => {
-          const { id } = e.data;
-          setBGIId(id);
-          fetchThumbnails();
+          refresh();
+          setBIS(true);
+          reloadBackground?.();
           resolve(Upload.LIST_IGNORE);
           worker.terminate();
         };
@@ -118,7 +91,7 @@ export function Setting(props: SettingProps) {
         worker.postMessage(data);
       });
     },
-    [fetchThumbnails]
+    [refresh]
   );
 
   const handleDownloadSpecificImage = async (imageId: number) => {
@@ -142,23 +115,42 @@ export function Setting(props: SettingProps) {
       const imageId = thumbnail?.id;
       await imageDb.images.delete(imageId);
       await imageDb.thumbnails.delete(imageId);
-      if (backgroundImageId === imageId) {
-        setBGIId(null);
+      refresh();
+      const biSwitch = await getBIS();
+      if (biSwitch) {
+        setBIS(false);
+        reloadBackground?.();
       }
-      fetchThumbnails();
     }
   };
 
-  const handleSet = () => {
-    if (thumbnail?.id) {
-      const imageId = thumbnail?.id;
-      setBGIId(imageId);
+  const handleSet = async () => {
+    const biSwitch = await getBIS();
+    if (!biSwitch && thumbnail?.id) {
+      setBIS(true);
+      reloadBackground?.();
     }
   };
 
-  const handleUnset = () => {
-    setBGIId(null);
+  const handleUnset = async () => {
+    const biSwitch = await getBIS();
+    if (biSwitch) {
+      setBIS(false);
+      reloadBackground?.();
+    }
   };
+
+  useEffect(
+    () => () => {
+      if (currentThumbnailObjectUrlRef.current) {
+        URL.revokeObjectURL(currentThumbnailObjectUrlRef.current);
+      }
+      if (currentImageObjectUrlRef.current) {
+        URL.revokeObjectURL(currentImageObjectUrlRef.current);
+      }
+    },
+    []
+  );
 
   return (
     <>
@@ -177,7 +169,7 @@ export function Setting(props: SettingProps) {
         <Upload accept="image/*," beforeUpload={beforeUpload} listType="picture-card">
           <button style={{ border: 0, background: "none" }} type="button">
             <PlusOutlined />
-            <div style={{ marginTop: 8 }}>{imageTotal === 0 ? "选择本地图片" : "替换当前图片"}</div>
+            <div style={{ marginTop: 8 }}>{!thumbnail ? "选择本地图片" : "替换当前图片"}</div>
           </button>
         </Upload>
         <Flex gap="small">

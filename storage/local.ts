@@ -4,8 +4,15 @@ export const local = new Storage({
   area: "local"
 });
 
-export const BGIKey = "newtab.backgroundImageId";
+const BISKey = "newtab.backgroundImageSwitch";
 
-export function setBGIId(value: any) {
-  return local.set(BGIKey, value);
+/**
+ * set 使用 undefined 是不生效的，可以使用 null
+ */
+export function setBIS(value: boolean) {
+  return local.set(BISKey, value);
+}
+
+export function getBIS() {
+  return local.get<boolean>(BISKey);
 }
