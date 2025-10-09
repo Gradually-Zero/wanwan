@@ -4,7 +4,7 @@ export const local = new Storage({
   area: "local"
 });
 
-const BISKey = "newtab.backgroundImageSwitch";
+const BISKey = "newtab.switch.backgroundImage";
 
 /**
  * set 使用 undefined 是不生效的，可以使用 null
@@ -16,3 +16,5 @@ export function setBIS(value: boolean) {
 export function getBIS() {
   return local.get<boolean>(BISKey);
 }
+
+export const shortcutsSwitchKey = "newtab.switch.shortcuts";

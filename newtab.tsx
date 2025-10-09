@@ -1,23 +1,30 @@
 import { useRequest } from "ahooks";
 import { Drawer, Dropdown } from "antd";
-import { SettingOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppstoreOutlined, SettingOutlined } from "@ant-design/icons";
 import { getBIS } from "~storage/local";
 import { imageDb } from "~indexedDB/ImageDB";
-import { Setting } from "~components/Setting";
+import { Background } from "~components/Background";
+import { ViewSetting } from "~components/ViewSetting";
 import type { MenuProps } from "antd";
 import "./styles/main.css";
 
 const items: MenuProps["items"] = [
   {
-    key: "setting",
-    label: "设置",
+    key: "background",
+    label: "背景设置",
     icon: <SettingOutlined />
+  },
+  {
+    key: "view",
+    label: "界面设置",
+    icon: <AppstoreOutlined />
   }
 ];
 
 function IndexNewtab() {
   const [openSetting, setOpenSetting] = useState(false);
+  const [viewSetting, setViewSetting] = useState(false);
   const currentImageObjectUrlRef = useRef<string>();
   const { refresh } = useRequest(getImage, {
     onBefore: () => {
@@ -38,8 +45,11 @@ function IndexNewtab() {
   });
 
   const menuOnClick = useCallback<Required<MenuProps>["onClick"]>((info) => {
-    if (info?.key === "setting") {
+    if (info?.key === "background") {
       setOpenSetting(true);
+    }
+    if (info?.key === "view") {
+      setViewSetting(true);
     }
   }, []);
 
@@ -66,7 +76,18 @@ function IndexNewtab() {
         onClose={() => {
           setOpenSetting(false);
         }}>
-        <Setting reloadBackground={refresh} />
+        <Background reloadBackground={refresh} />
+      </Drawer>
+      <Drawer
+        open={viewSetting}
+        size="large"
+        title={null}
+        closable={false}
+        destroyOnHidden
+        onClose={() => {
+          setViewSetting(false);
+        }}>
+        <ViewSetting />
       </Drawer>
     </>
   );

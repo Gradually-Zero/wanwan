@@ -1,6 +1,6 @@
 import { useRequest } from "ahooks";
 import { PlusOutlined } from "@ant-design/icons";
-import { Image, Upload, Flex, Button } from "antd";
+import { Image, Upload, Flex, Button, Space } from "antd";
 import { useCallback, useEffect, useState, useRef } from "react";
 import { imageDb } from "~indexedDB/ImageDB";
 import { getBIS, setBIS } from "~storage/local";
@@ -12,16 +12,18 @@ interface DisplayedImage {
   thumbnailUrl: string;
 }
 
-interface SettingProps {
+interface BackgroundProps {
   reloadBackground?: () => void;
 }
 
-export function Setting(props: SettingProps) {
+export function Background(props: BackgroundProps) {
   const { reloadBackground } = props;
   const [thumbnail, setThumbnail] = useState<DisplayedImage>();
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string>();
   const currentImageObjectUrlRef = useRef<string>();
   const currentThumbnailObjectUrlRef = useRef<string>();
+
+  const { data: bis, loading: bisLoading, refresh: reloadBIS } = useRequest(getBIS);
 
   const { refresh } = useRequest(() => imageDb.images.orderBy("id").limit(1).keys(), {
     onBefore: () => {
@@ -75,9 +77,10 @@ export function Setting(props: SettingProps) {
 
         worker.onmessage = async (e: MessageEvent<ThumbnailResponseData>) => {
           refresh();
-          setBIS(true);
+          await setBIS(true);
           reloadBackground?.();
           resolve(Upload.LIST_IGNORE);
+          reloadBIS();
           worker.terminate();
         };
 
@@ -91,7 +94,7 @@ export function Setting(props: SettingProps) {
         worker.postMessage(data);
       });
     },
-    [refresh]
+    []
   );
 
   const handleDownloadSpecificImage = async (imageId: number) => {
@@ -124,21 +127,18 @@ export function Setting(props: SettingProps) {
     }
   };
 
-  const handleSet = async () => {
-    const biSwitch = await getBIS();
-    if (!biSwitch && thumbnail?.id) {
+  const setChange = useCallback(() => {
+    if (!bis && thumbnail?.id) {
       setBIS(true);
       reloadBackground?.();
+      reloadBIS();
     }
-  };
-
-  const handleUnset = async () => {
-    const biSwitch = await getBIS();
-    if (biSwitch) {
+    if (bis) {
       setBIS(false);
       reloadBackground?.();
+      reloadBIS();
     }
-  };
+  }, [bis, thumbnail]);
 
   useEffect(
     () => () => {
@@ -154,30 +154,39 @@ export function Setting(props: SettingProps) {
 
   return (
     <>
-      <Flex wrap="wrap" gap="middle">
+      <Flex vertical gap="middle">
         {thumbnail ? (
-          <Image
-            src={thumbnail?.thumbnailUrl}
-            width={102}
-            height={102}
-            preview={{
-              onVisibleChange: handleVisibleChange,
-              src: imagePreviewUrl
-            }}
-          />
+          <Flex wrap="wrap" gap="middle">
+            <Image
+              src={thumbnail?.thumbnailUrl}
+              width={102}
+              height={102}
+              preview={{
+                onVisibleChange: handleVisibleChange,
+                src: imagePreviewUrl
+              }}
+            />
+            <Flex vertical gap="middle">
+              <Space size="middle">
+                <Button onClick={handleDownload}>下载</Button>
+                <Button onClick={setChange} loading={bisLoading}>
+                  {bis ? "清除当前图片" : "设置当前图片"}
+                </Button>
+              </Space>
+              <div>
+                <Button onClick={handleDelete}>删除</Button>
+              </div>
+            </Flex>
+          </Flex>
         ) : null}
-        <Upload accept="image/*," beforeUpload={beforeUpload} listType="picture-card">
-          <button style={{ border: 0, background: "none" }} type="button">
-            <PlusOutlined />
-            <div style={{ marginTop: 8 }}>{!thumbnail ? "选择本地图片" : "替换当前图片"}</div>
-          </button>
-        </Upload>
-        <Flex gap="small">
-          <Button onClick={handleDownload}>下载</Button>
-          <Button onClick={handleDelete}>删除</Button>
-          <Button onClick={handleSet}>设置</Button>
-          <Button onClick={handleUnset}>取消</Button>
-        </Flex>
+        <div>
+          <Upload accept="image/*," beforeUpload={beforeUpload} listType="picture-card">
+            <button style={{ border: 0, background: "none" }} type="button">
+              <PlusOutlined />
+              <div style={{ marginTop: 8 }}>{!thumbnail ? "选择本地图片" : "替换当前图片"}</div>
+            </button>
+          </Upload>
+        </div>
       </Flex>
     </>
   );
