@@ -50,7 +50,7 @@ export function Background(props: BackgroundProps) {
     }
   });
 
-  const handleVisibleChange = async (visible: boolean) => {
+  const handleOpenChange = async (visible: boolean) => {
     if (currentImageObjectUrlRef.current) {
       URL.revokeObjectURL(currentImageObjectUrlRef.current);
       currentImageObjectUrlRef.current = undefined;
@@ -162,7 +162,7 @@ export function Background(props: BackgroundProps) {
               width={102}
               height={102}
               preview={{
-                onVisibleChange: handleVisibleChange,
+                onOpenChange: handleOpenChange,
                 src: imagePreviewUrl
               }}
             />
