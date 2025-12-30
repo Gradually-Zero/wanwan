@@ -170,7 +170,7 @@ export function Background(props: BackgroundProps) {
               <Space size="middle">
                 <Button onClick={handleDownload}>下载</Button>
                 <Button onClick={setChange} loading={bisLoading}>
-                  {bis ? "清除当前图片" : "设置当前图片"}
+                  {bis ? "取消当前图片" : "设置当前图片"}
                 </Button>
               </Space>
               <div>
