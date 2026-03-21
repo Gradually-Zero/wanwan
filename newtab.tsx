@@ -1,31 +1,22 @@
 import { useRequest } from "ahooks";
-import { Drawer, Dropdown } from "antd";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AppstoreOutlined, SettingOutlined } from "@ant-design/icons";
-import { getBIS } from "~storage/local";
+import { useStorage } from "@plasmohq/storage/hook";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { imageDb } from "~indexedDB/ImageDB";
-import { Background } from "~components/Background";
-import { ViewSetting } from "~components/ViewSetting";
-import type { MenuProps } from "antd";
+import { getBIS, local, shortcutsLinksKey, shortcutsSwitchKey } from "~storage/local";
+import type { ShortcutLink } from "~storage/local";
 import "./styles/main.css";
 
-const items: MenuProps["items"] = [
-  {
-    key: "background",
-    label: "背景设置",
-    icon: <SettingOutlined />
-  },
-  {
-    key: "view",
-    label: "界面设置",
-    icon: <AppstoreOutlined />
-  }
-];
+const Background = lazy(() => import("~components/Background").then((module) => ({ default: module.Background })));
+const ShortcutSettings = lazy(() => import("~components/ShortcutSettings").then((module) => ({ default: module.ShortcutSettings })));
+const SETTING_DRAWER_TRANSITION_MS = 300;
 
 function IndexNewtab() {
-  const [openSetting, setOpenSetting] = useState(false);
-  const [viewSetting, setViewSetting] = useState(false);
+  const [settingDrawerMounted, setSettingDrawerMounted] = useState(false);
+  const [settingDrawerOpen, setSettingDrawerOpen] = useState(false);
+  const [shortcutsSwitch] = useStorage({ instance: local, key: shortcutsSwitchKey }, false);
+  const [shortcutLinks] = useStorage<ShortcutLink[]>({ instance: local, key: shortcutsLinksKey }, []);
   const currentImageObjectUrlRef = useRef<string>();
+  const settingDrawerTimerRef = useRef<number>();
   const { refresh } = useRequest(getImage, {
     onBefore: () => {
       if (currentImageObjectUrlRef.current) {
@@ -44,17 +35,11 @@ function IndexNewtab() {
     }
   });
 
-  const menuOnClick = useCallback<Required<MenuProps>["onClick"]>((info) => {
-    if (info?.key === "background") {
-      setOpenSetting(true);
-    }
-    if (info?.key === "view") {
-      setViewSetting(true);
-    }
-  }, []);
-
   useEffect(
     () => () => {
+      if (settingDrawerTimerRef.current) {
+        window.clearTimeout(settingDrawerTimerRef.current);
+      }
       if (currentImageObjectUrlRef.current) {
         URL.revokeObjectURL(currentImageObjectUrlRef.current);
       }
@@ -62,33 +47,78 @@ function IndexNewtab() {
     []
   );
 
+  const openSettingDrawer = () => {
+    if (settingDrawerTimerRef.current) {
+      window.clearTimeout(settingDrawerTimerRef.current);
+    }
+    setSettingDrawerMounted(true);
+    window.requestAnimationFrame(() => {
+      setSettingDrawerOpen(true);
+    });
+  };
+
+  const closeSettingDrawer = () => {
+    setSettingDrawerOpen(false);
+    if (settingDrawerTimerRef.current) {
+      window.clearTimeout(settingDrawerTimerRef.current);
+    }
+    settingDrawerTimerRef.current = window.setTimeout(() => {
+      setSettingDrawerMounted(false);
+      settingDrawerTimerRef.current = undefined;
+    }, SETTING_DRAWER_TRANSITION_MS);
+  };
+
   return (
     <>
-      <Dropdown trigger={["contextMenu"]} menu={{ items, onClick: menuOnClick }}>
-        <div style={{ height: "100vh", width: "100vw" }} />
-      </Dropdown>
-      <Drawer
-        open={openSetting}
-        size="large"
-        title={null}
-        closable={false}
-        destroyOnHidden
-        onClose={() => {
-          setOpenSetting(false);
-        }}>
-        <Background reloadBackground={refresh} />
-      </Drawer>
-      <Drawer
-        open={viewSetting}
-        size="large"
-        title={null}
-        closable={false}
-        destroyOnHidden
-        onClose={() => {
-          setViewSetting(false);
-        }}>
-        <ViewSetting />
-      </Drawer>
+      <div
+        className="flex min-h-screen w-full items-center justify-center p-6"
+        onContextMenu={(event) => {
+          event.preventDefault();
+          openSettingDrawer();
+        }}
+      >
+        {shortcutsSwitch ? (
+          <div className="grid w-full max-w-[960px] grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5">
+            {(shortcutLinks ?? []).map((item) => (
+              <a key={item.id} href={item.url} className="ui-shortcut-card ui-shortcut-card-interactive" title={item.url}>
+                <span className="ui-shortcut-title">{item.title}</span>
+                <span className="ui-shortcut-url">{item.url}</span>
+              </a>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {settingDrawerMounted ? (
+        // 新标签页设置抽屉的基础层。
+        <div className={`fixed inset-0 z-40 ${settingDrawerOpen ? "pointer-events-auto" : "pointer-events-none"}`} role="presentation">
+          <div
+            className={`absolute inset-0 bg-slate-900/30 transition-opacity duration-300 ease-out ${settingDrawerOpen ? "opacity-100" : "opacity-0"}`}
+            onClick={() => {
+              closeSettingDrawer();
+            }}
+          />
+          <aside
+            data-setting-drawer="panel"
+            className={`absolute right-0 top-0 h-screen w-[min(980px,88vw)] overflow-auto bg-white p-4 shadow-[-8px_0_24px_rgba(0,0,0,0.16)] transition-transform duration-300 ease-[cubic-bezier(0,0,0.2,1)] will-change-transform max-md:w-screen ${
+              settingDrawerOpen ? "translate-x-0" : "translate-x-full"
+            }`}
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <Suspense fallback={<div className="text-sm text-slate-500">加载中...</div>}>
+              <div className="flex flex-col gap-4">
+                <section className="ui-panel">
+                  <Background reloadBackground={refresh} />
+                </section>
+                <section className="ui-panel">
+                  <ShortcutSettings />
+                </section>
+              </div>
+            </Suspense>
+          </aside>
+        </div>
+      ) : null}
     </>
   );
 }

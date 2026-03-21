@@ -18,3 +18,10 @@ export function getBIS() {
 }
 
 export const shortcutsSwitchKey = "newtab.switch.shortcuts";
+export const shortcutsLinksKey = "newtab.shortcuts.links";
+
+export interface ShortcutLink {
+  id: string;
+  title: string;
+  url: string;
+}

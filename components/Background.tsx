@@ -1,15 +1,15 @@
 import { useRequest } from "ahooks";
-import { PlusOutlined } from "@ant-design/icons";
-import { Image, Upload, Flex, Button, Space } from "antd";
-import { useCallback, useEffect, useState, useRef } from "react";
+import { createPortal } from "react-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { imageDb } from "~indexedDB/ImageDB";
-import { getBIS, setBIS } from "~storage/local";
-import type { BeforeUpload } from "~interface";
+import { getBIS, local, setBIS, shortcutsSwitchKey } from "~storage/local";
 import type { ThumbnailAcceptData, ThumbnailResponseData } from "~workers/thumbnailType";
+
+const MODAL_TRANSITION_MS = 200;
 
 interface DisplayedImage {
   id: number;
-  thumbnailUrl: string;
+  thumbnailUrl?: string;
 }
 
 interface BackgroundProps {
@@ -20,10 +20,48 @@ export function Background(props: BackgroundProps) {
   const { reloadBackground } = props;
   const [thumbnail, setThumbnail] = useState<DisplayedImage>();
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string>();
+  const [previewMounted, setPreviewMounted] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [regeneratingThumbnail, setRegeneratingThumbnail] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const currentImageObjectUrlRef = useRef<string>();
   const currentThumbnailObjectUrlRef = useRef<string>();
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const previewTimerRef = useRef<number>();
 
   const { data: bis, loading: bisLoading, refresh: reloadBIS } = useRequest(getBIS);
+
+  const runThumbnailWorker = useCallback((file: ThumbnailAcceptData["file"]) => {
+    return new Promise<number | undefined>((resolve) => {
+      const worker = new Worker(new URL("../workers/thumbnail.ts", import.meta.url), { type: "module" });
+      let settled = false;
+      const timeoutId = window.setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          worker.terminate();
+          resolve(undefined);
+        }
+      }, 10000);
+
+      const finish = (id?: number) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        window.clearTimeout(timeoutId);
+        worker.terminate();
+        resolve(id);
+      };
+
+      worker.onmessage = (e: MessageEvent<ThumbnailResponseData>) => {
+        const id = e.data?.id;
+        finish(typeof id === "number" ? id : undefined);
+      };
+      worker.onerror = () => finish(undefined);
+      worker.onmessageerror = () => finish(undefined);
+      worker.postMessage({ file } satisfies ThumbnailAcceptData);
+    });
+  }, []);
 
   const { refresh } = useRequest(() => imageDb.images.orderBy("id").limit(1).keys(), {
     onBefore: () => {
@@ -35,113 +73,156 @@ export function Background(props: BackgroundProps) {
       if (Array.isArray(data) && data?.length === 1 && typeof data[0] === "number") {
         const imageId = data[0];
         const thumbnailResult = await imageDb.thumbnails.get(imageId);
-        let temp;
         if (thumbnailResult) {
           const url = URL.createObjectURL(thumbnailResult.thumbnail);
           currentThumbnailObjectUrlRef.current = url;
-          temp = { id: thumbnailResult.id, thumbnailUrl: url };
+          setThumbnail({ id: thumbnailResult.id, thumbnailUrl: url });
         } else {
-          temp = { id: imageId, thumbnailUrl: defaultThumbnailUrl };
+          setThumbnail({ id: imageId });
         }
-        setThumbnail(temp);
         return;
       }
       setThumbnail(undefined);
     }
   });
 
-  const handleOpenChange = async (visible: boolean) => {
+  const clearImagePreviewUrl = () => {
     if (currentImageObjectUrlRef.current) {
       URL.revokeObjectURL(currentImageObjectUrlRef.current);
       currentImageObjectUrlRef.current = undefined;
     }
-    if (visible && thumbnail?.id) {
-      const imageId = thumbnail?.id;
-      const imageRecord = await imageDb.images.get(imageId);
-      if (imageRecord?.file) {
-        const imageUrl = URL.createObjectURL(imageRecord.file);
-        setImagePreviewUrl(imageUrl);
-        currentImageObjectUrlRef.current = imageUrl;
-      } else {
-        console.warn("Original image file not found for id:", imageId, "Falling back to thumbnail for preview.");
-      }
-      return;
-    }
     setImagePreviewUrl(undefined);
   };
 
-  const beforeUpload = useCallback<BeforeUpload>(
-    (file) => {
-      return new Promise((resolve) => {
-        const worker = new Worker(new URL("../workers/thumbnail.ts", import.meta.url), { type: "module" });
-
-        worker.onmessage = async (e: MessageEvent<ThumbnailResponseData>) => {
-          refresh();
-          await setBIS(true);
-          reloadBackground?.();
-          resolve(Upload.LIST_IGNORE);
-          reloadBIS();
-          worker.terminate();
-        };
-
-        worker.onerror = (error) => {
-          console.error("Thumbnail worker error:", error?.message);
-          resolve(Upload.LIST_IGNORE);
-          worker.terminate();
-        };
-
-        const data: ThumbnailAcceptData = { file };
-        worker.postMessage(data);
-      });
-    },
-    []
-  );
-
-  const handleDownloadSpecificImage = async (imageId: number) => {
+  const setImagePreviewById = async (imageId: number) => {
     const imageRecord = await imageDb.images.get(imageId);
     if (imageRecord?.file) {
-      downloadFile(imageRecord.file, imageRecord.file?.name || `image-${imageRecord.id}`);
-    } else {
-      console.error("Original file not found for download:", imageId);
+      const imageUrl = URL.createObjectURL(imageRecord.file);
+      setImagePreviewUrl(imageUrl);
+      currentImageObjectUrlRef.current = imageUrl;
+      return true;
+    }
+    return false;
+  };
+
+  const openPreview = async () => {
+    if (!thumbnail?.id) {
+      return;
+    }
+    if (previewTimerRef.current) {
+      window.clearTimeout(previewTimerRef.current);
+      previewTimerRef.current = undefined;
+    }
+    clearImagePreviewUrl();
+    const ok = await setImagePreviewById(thumbnail.id);
+    if (ok) {
+      setPreviewMounted(true);
+      window.requestAnimationFrame(() => {
+        setPreviewOpen(true);
+      });
     }
   };
 
-  const handleDownload = async () => {
-    if (thumbnail?.id) {
-      const imageId = thumbnail?.id;
-      await handleDownloadSpecificImage(imageId);
+  const closePreview = () => {
+    setPreviewOpen(false);
+    if (previewTimerRef.current) {
+      window.clearTimeout(previewTimerRef.current);
+    }
+    previewTimerRef.current = window.setTimeout(() => {
+      setPreviewMounted(false);
+      previewTimerRef.current = undefined;
+      clearImagePreviewUrl();
+    }, MODAL_TRANSITION_MS);
+  };
+
+  const handleUploadFile = async (file?: File) => {
+    if (!file) {
+      return;
+    }
+    setUploading(true);
+    const id = await runThumbnailWorker(file);
+    await refresh();
+    if (typeof id === "number") {
+      await setBIS(true);
+      reloadBackground?.();
+      reloadBIS();
+    }
+    setUploading(false);
+    if (uploadInputRef.current) {
+      uploadInputRef.current.value = "";
     }
   };
 
   const handleDelete = async () => {
-    if (thumbnail?.id) {
-      const imageId = thumbnail?.id;
-      await imageDb.images.delete(imageId);
-      await imageDb.thumbnails.delete(imageId);
-      refresh();
-      const biSwitch = await getBIS();
-      if (biSwitch) {
-        setBIS(false);
-        reloadBackground?.();
-      }
+    if (!thumbnail?.id) {
+      return;
+    }
+    const confirmed = window.confirm("确认删除这张背景图？");
+    if (!confirmed) {
+      return;
+    }
+    const imageId = thumbnail.id;
+    await imageDb.images.delete(imageId);
+    await imageDb.thumbnails.delete(imageId);
+    await refresh();
+    const biSwitch = await getBIS();
+    if (biSwitch) {
+      await setBIS(false);
+      reloadBackground?.();
+      reloadBIS();
     }
   };
 
-  const setChange = useCallback(() => {
-    if (!bis && thumbnail?.id) {
-      setBIS(true);
+  const handleDownload = async () => {
+    if (!thumbnail?.id) {
+      return;
+    }
+    const imageRecord = await imageDb.images.get(thumbnail.id);
+    if (!imageRecord?.file) {
+      return;
+    }
+    const downloadUrl = URL.createObjectURL(imageRecord.file);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = imageRecord.file.name || `image-${imageRecord.id}`;
+    link.click();
+    URL.revokeObjectURL(downloadUrl);
+  };
+
+  const handleRegenerateThumbnail = async () => {
+    if (!thumbnail?.id) {
+      return;
+    }
+    const imageRecord = await imageDb.images.get(thumbnail.id);
+    if (!imageRecord?.file) {
+      return;
+    }
+    setRegeneratingThumbnail(true);
+    await runThumbnailWorker(imageRecord.file);
+    await refresh();
+    setRegeneratingThumbnail(false);
+  };
+
+  const handleSwitchChange = useCallback(
+    async (checked: boolean) => {
+      if (!thumbnail?.id) {
+        return;
+      }
+      await setBIS(checked);
+      if (!checked) {
+        await local.set(shortcutsSwitchKey, false);
+      }
       reloadBackground?.();
       reloadBIS();
-    }
-    if (bis) {
-      setBIS(false);
-      reloadBackground?.();
-      reloadBIS();
-    }
-  }, [bis, thumbnail]);
+    },
+    [thumbnail, reloadBackground, reloadBIS]
+  );
 
   useEffect(
     () => () => {
+      if (previewTimerRef.current) {
+        window.clearTimeout(previewTimerRef.current);
+      }
       if (currentThumbnailObjectUrlRef.current) {
         URL.revokeObjectURL(currentThumbnailObjectUrlRef.current);
       }
@@ -153,56 +234,93 @@ export function Background(props: BackgroundProps) {
   );
 
   return (
-    <>
-      <Flex vertical gap="middle">
-        {thumbnail ? (
-          <Flex wrap="wrap" gap="middle">
-            <Image
-              src={thumbnail?.thumbnailUrl}
-              width={102}
-              height={102}
-              preview={{
-                onOpenChange: handleOpenChange,
-                src: imagePreviewUrl
-              }}
-            />
-            <Flex vertical gap="middle">
-              <Space size="middle">
-                <Button onClick={handleDownload}>下载</Button>
-                <Button onClick={setChange} loading={bisLoading}>
-                  {bis ? "取消当前图片" : "设置当前图片"}
-                </Button>
-              </Space>
-              <div>
-                <Button onClick={handleDelete}>删除</Button>
-              </div>
-            </Flex>
-          </Flex>
-        ) : null}
-        <div>
-          <Upload accept="image/*," beforeUpload={beforeUpload} listType="picture-card">
-            <button style={{ border: 0, background: "none" }} type="button">
-              <PlusOutlined />
-              <div style={{ marginTop: 8 }}>{!thumbnail ? "选择本地图片" : "替换当前图片"}</div>
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-bold text-slate-900">启用背景图</span>
+        <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
+          <input type="checkbox" checked={Boolean(bis)} disabled={!thumbnail || bisLoading} onChange={(event) => void handleSwitchChange(event.target.checked)} />
+          <span>{bisLoading ? "读取中..." : Boolean(bis) ? "已开启" : "已关闭"}</span>
+        </label>
+      </div>
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          void handleUploadFile(file);
+        }}
+      />
+      {thumbnail ? (
+        <div className="flex flex-wrap items-start gap-4">
+          {thumbnail.thumbnailUrl ? (
+            <button type="button" className="cursor-pointer border-0 bg-transparent p-0" onClick={() => void openPreview()}>
+              <img src={thumbnail.thumbnailUrl} width={102} height={102} alt="背景图缩略图" className="h-[102px] w-[102px] rounded-xl border border-slate-200 object-cover" />
             </button>
-          </Upload>
+          ) : (
+            <button
+              type="button"
+              className="inline-flex h-[102px] w-[102px] cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-2 text-center text-xs leading-5 text-slate-600"
+              onClick={() => void openPreview()}
+            >
+              缩略图缺失，点击预览原图
+            </button>
+          )}
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-slate-500">点击缩略图可预览原图</span>
+              <button type="button" className="ui-link-button ui-link-danger cursor-pointer" onClick={() => void handleDelete()}>
+                删除背景图
+              </button>
+              <button type="button" className="ui-link-button cursor-pointer" onClick={() => void handleDownload()}>
+                下载原图
+              </button>
+              {!thumbnail.thumbnailUrl ? (
+                <button type="button" className="ui-link-button cursor-pointer" disabled={regeneratingThumbnail} onClick={() => void handleRegenerateThumbnail()}>
+                  {regeneratingThumbnail ? "重新生成中..." : "重新生成缩略图"}
+                </button>
+              ) : null}
+            </div>
+            <div className="flex gap-2">
+              <button type="button" className="ui-button cursor-pointer" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
+                {uploading ? "上传中..." : "替换图片"}
+              </button>
+            </div>
+          </div>
         </div>
-      </Flex>
-    </>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="text-xs text-slate-500">还没有设置背景图</div>
+          <button type="button" className="ui-button cursor-pointer" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
+            {uploading ? "上传中..." : "上传图片"}
+          </button>
+        </div>
+      )}
+      {previewMounted && imagePreviewUrl
+        ? createPortal(
+            // 图片预览层级最高，需要脱离抽屉容器，避免被滚动和裁剪影响。
+            <div
+              className={`fixed inset-0 z-[60] flex items-center justify-center p-4 transition-all duration-200 ease-out ${
+                previewOpen ? "pointer-events-auto bg-black/45 opacity-100" : "pointer-events-none bg-black/0 opacity-0"
+              }`}
+              role="presentation"
+              onClick={closePreview}
+            >
+              <img
+                src={imagePreviewUrl}
+                alt="背景图预览"
+                className={`max-h-[90vh] max-w-[min(1200px,92vw)] rounded-xl transition-all duration-200 ease-out ${
+                  previewOpen ? "scale-100 translate-y-0 opacity-100" : "scale-95 translate-y-2 opacity-0"
+                }`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                }}
+              />
+            </div>,
+            document.body
+          )
+        : null}
+    </div>
   );
 }
-
-type Obj = Parameters<typeof URL.createObjectURL>[0];
-
-function downloadFile(obj: Obj, fileName: string) {
-  const downloadUrl = URL.createObjectURL(obj);
-  const link = document.createElement("a");
-  link.href = downloadUrl;
-  link.download = fileName;
-  link.click();
-  // 清理临时 URL
-  window.URL.revokeObjectURL(downloadUrl);
-}
-
-const defaultThumbnailUrl =
-  "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgc3R5bGU9ImZpbGw6I2VlZTtzdHJva2U6I2NjYztzdHJva2Utd2lkdGg6MSIgLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTJweCIgZmlsbD0iIzgwODA4MCI+Tm8gVGh1bWI8L3RleHQ+PC9zdmc+Cg==";

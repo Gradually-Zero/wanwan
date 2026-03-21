@@ -1,8 +1,6 @@
 import Dexie from "dexie";
 import type { EntityTable } from "dexie";
-import type { GetProp, UploadProps } from "antd";
-
-type FileType = Parameters<GetProp<UploadProps, "beforeUpload">>[0];
+import type { FileType } from "~interface";
 
 interface ImageTableItem {
   /** 自增主键 */

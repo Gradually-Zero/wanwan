@@ -33,7 +33,7 @@ async function createImageThumbnail(file: FileType, targetWidth: number, targetH
   // drawWidth = originalWidth * scaleFactor;
   // drawHeight = originalHeight * scaleFactor;
   // offsetX = (targetWidth - drawWidth) / 2;
-  // offsetY = (targetHeight - drawHeight) / 2; G
+  // offsetY = (targetHeight - drawHeight) / 2;
 
   const canvas = new OffscreenCanvas(targetWidth, targetHeight);
   const ctx = canvas.getContext("2d");
@@ -70,7 +70,7 @@ self.onmessage = async (event: MessageEvent<ThumbnailAcceptData>) => {
  * @param file - 图片文件
  */
 async function setImageAndCleanUp(file: FileType) {
-  // 'rw' -> read-write transaction on the 'images' table.
+  // "rw" 表示对 "images" 表开启读写事务。
   const firstId = await imageDb.transaction("rw", imageDb.images, async () => {
     // 1. 获取所有主键，这非常快，因为它不加载数据。
     const allKeys = await imageDb.images.orderBy("id").keys();
