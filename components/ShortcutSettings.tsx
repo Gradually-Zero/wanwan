@@ -6,15 +6,15 @@ import { directionBiased } from "@dnd-kit/collision";
 import { useSortable } from "@dnd-kit/react/sortable";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { imageDb } from "~indexedDB/ImageDB";
-import { createShortcutId, getNoticeTextClass, normalizeUrl } from "~utils/shortcut";
 import { getBIS, local, shortcutsLinksKey, shortcutsSwitchKey } from "~storage/local";
+import { createShortcutId, getNoticeTextClass, getShortcutExportFileName, normalizeUrl, parseShortcutLinksJson, regenerateShortcutIds, serializeShortcutLinks } from "~utils/shortcut";
 import type { DragDropEventHandlers } from "@dnd-kit/react";
 import type { ShortcutLink } from "~storage/local";
 
 const MODAL_TRANSITION_MS = 200;
 
 interface Notice {
-  type: "error" | "warning" | "info";
+  type: "success" | "error" | "warning" | "info";
   text: string;
 }
 
@@ -34,6 +34,7 @@ export function ShortcutSettings() {
   const [notice, setNotice] = useState<Notice>();
   const sortPreviewBgObjectUrlRef = useRef<string>();
   const sortModalTimerRef = useRef<number>();
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const canSubmit = useMemo(() => title.trim().length > 0 && url.trim().length > 0, [title, url]);
 
@@ -119,6 +120,44 @@ export function ShortcutSettings() {
 
   const onSortEnd: NonNullable<DragDropEventHandlers["onDragEnd"]> = (event) => {
     setShortcutLinks((items) => move(items ?? [], event));
+  };
+
+  const onExport = () => {
+    const payload = serializeShortcutLinks(shortcutLinks ?? []);
+    const exportBlob = new Blob([payload], { type: "application/json;charset=utf-8" });
+    const exportUrl = URL.createObjectURL(exportBlob);
+    const link = document.createElement("a");
+    link.href = exportUrl;
+    link.download = getShortcutExportFileName();
+    link.click();
+    URL.revokeObjectURL(exportUrl);
+    setNoticeText("success", "已导出快捷访问 JSON");
+  };
+
+  const onImport = async (file?: File) => {
+    if (!file) {
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const importedLinks = regenerateShortcutIds(parseShortcutLinksJson(text));
+      if (importedLinks.length === 0) {
+        setNoticeText("info", "导入成功，但没有新增快捷访问");
+        return;
+      }
+
+      setShortcutLinks([...(shortcutLinks ?? []), ...importedLinks]);
+      setShortcutsSwitch(true);
+      setNoticeText("success", `已导入 ${importedLinks.length} 项快捷访问`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "导入失败，请检查 JSON 文件";
+      setNoticeText("error", message);
+    } finally {
+      if (importInputRef.current) {
+        importInputRef.current.value = "";
+      }
+    }
   };
 
   useEffect(() => {
@@ -219,10 +258,27 @@ export function ShortcutSettings() {
     <div className="relative flex w-full flex-col gap-3">
       <div className="flex items-center justify-between gap-2 pb-1">
         <strong className="text-sm font-bold text-slate-900">快捷访问</strong>
-        <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
-          <input type="checkbox" checked={shortcutsSwitch} onChange={(event) => setShortcutsSwitch(event.target.checked)} />
-          <span>{shortcutsSwitch ? "已开启" : "已关闭"}</span>
-        </label>
+        <div className="flex items-center gap-3">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(event) => {
+              void onImport(event.target.files?.[0]);
+            }}
+          />
+          <button type="button" className="ui-link-button" onClick={() => importInputRef.current?.click()}>
+            导入
+          </button>
+          <button type="button" className="ui-link-button" onClick={onExport}>
+            导出
+          </button>
+          <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
+            <input type="checkbox" checked={shortcutsSwitch} onChange={(event) => setShortcutsSwitch(event.target.checked)} />
+            <span>{shortcutsSwitch ? "已开启" : "已关闭"}</span>
+          </label>
+        </div>
       </div>
       {notice ? <div className={`text-xs ${getNoticeTextClass(notice.type)}`}>{notice.text}</div> : null}
       <div className="flex flex-col gap-3">
