@@ -17,10 +17,17 @@ export function getBIS() {
   return local.get<boolean>(BISKey);
 }
 
-export const shortcutsSwitchKey = "newtab.switch.shortcuts";
-export const shortcutsLinksKey = "newtab.shortcuts.links";
+export const commonSwitchKey = "newtab.switch.common";
+export const commonLinksKey = "newtab.common.links";
+export const bookmarksLinksKey = "extension.bookmarks.links";
 
-export interface ShortcutLink {
+export interface CommonLink {
+  id: string;
+  title: string;
+  url: string;
+}
+
+export interface BookmarkLink {
   id: string;
   title: string;
   url: string;

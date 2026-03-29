@@ -2,7 +2,7 @@ import { useRequest } from "ahooks";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { imageDb } from "~indexedDB/ImageDB";
-import { getBIS, local, setBIS, shortcutsSwitchKey } from "~storage/local";
+import { commonSwitchKey, getBIS, local, setBIS } from "~storage/local";
 import type { ThumbnailAcceptData, ThumbnailResponseData } from "~workers/thumbnailType";
 
 const MODAL_TRANSITION_MS = 200;
@@ -24,10 +24,10 @@ export function Background(props: BackgroundProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [regeneratingThumbnail, setRegeneratingThumbnail] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const currentImageObjectUrlRef = useRef<string>();
-  const currentThumbnailObjectUrlRef = useRef<string>();
+  const currentImageObjectUrlRef = useRef<string | undefined>(undefined);
+  const currentThumbnailObjectUrlRef = useRef<string | undefined>(undefined);
   const uploadInputRef = useRef<HTMLInputElement>(null);
-  const previewTimerRef = useRef<number>();
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { data: bis, loading: bisLoading, refresh: reloadBIS } = useRequest(getBIS);
 
@@ -35,7 +35,7 @@ export function Background(props: BackgroundProps) {
     return new Promise<number | undefined>((resolve) => {
       const worker = new Worker(new URL("../workers/thumbnail.ts", import.meta.url), { type: "module" });
       let settled = false;
-      const timeoutId = window.setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         if (!settled) {
           settled = true;
           worker.terminate();
@@ -48,7 +48,7 @@ export function Background(props: BackgroundProps) {
           return;
         }
         settled = true;
-        window.clearTimeout(timeoutId);
+        clearTimeout(timeoutId);
         worker.terminate();
         resolve(id);
       };
@@ -110,8 +110,8 @@ export function Background(props: BackgroundProps) {
       return;
     }
     if (previewTimerRef.current) {
-      window.clearTimeout(previewTimerRef.current);
-      previewTimerRef.current = undefined;
+      clearTimeout(previewTimerRef.current);
+      previewTimerRef.current = null;
     }
     clearImagePreviewUrl();
     const ok = await setImagePreviewById(thumbnail.id);
@@ -126,11 +126,11 @@ export function Background(props: BackgroundProps) {
   const closePreview = () => {
     setPreviewOpen(false);
     if (previewTimerRef.current) {
-      window.clearTimeout(previewTimerRef.current);
+      clearTimeout(previewTimerRef.current);
     }
-    previewTimerRef.current = window.setTimeout(() => {
+    previewTimerRef.current = setTimeout(() => {
       setPreviewMounted(false);
-      previewTimerRef.current = undefined;
+      previewTimerRef.current = null;
       clearImagePreviewUrl();
     }, MODAL_TRANSITION_MS);
   };
@@ -210,7 +210,7 @@ export function Background(props: BackgroundProps) {
       }
       await setBIS(checked);
       if (!checked) {
-        await local.set(shortcutsSwitchKey, false);
+        await local.set(commonSwitchKey, false);
       }
       reloadBackground?.();
       reloadBIS();
@@ -221,7 +221,7 @@ export function Background(props: BackgroundProps) {
   useEffect(
     () => () => {
       if (previewTimerRef.current) {
-        window.clearTimeout(previewTimerRef.current);
+        clearTimeout(previewTimerRef.current);
       }
       if (currentThumbnailObjectUrlRef.current) {
         URL.revokeObjectURL(currentThumbnailObjectUrlRef.current);
@@ -236,10 +236,9 @@ export function Background(props: BackgroundProps) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-bold text-slate-900">启用背景图</span>
-        <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
-          <input type="checkbox" checked={Boolean(bis)} disabled={!thumbnail || bisLoading} onChange={(event) => void handleSwitchChange(event.target.checked)} />
-          <span>{bisLoading ? "读取中..." : Boolean(bis) ? "已开启" : "已关闭"}</span>
+        <span className="text-sm font-bold text-base-content">启用背景图</span>
+        <label className="inline-flex items-center gap-2 text-xs text-base-content/70">
+          <input className="toggle toggle-sm" type="checkbox" checked={Boolean(bis)} disabled={!thumbnail || bisLoading} onChange={(event) => void handleSwitchChange(event.target.checked)} />
         </label>
       </div>
       <input
@@ -256,34 +255,36 @@ export function Background(props: BackgroundProps) {
         <div className="flex flex-wrap items-start gap-4">
           {thumbnail.thumbnailUrl ? (
             <button type="button" className="cursor-pointer border-0 bg-transparent p-0" onClick={() => void openPreview()}>
-              <img src={thumbnail.thumbnailUrl} width={102} height={102} alt="背景图缩略图" className="h-[102px] w-[102px] rounded-xl border border-slate-200 object-cover" />
+              <img src={thumbnail.thumbnailUrl} width={102} height={102} alt="背景图缩略图" className="size-26 rounded-sm border border-base-300 object-cover shadow-sm" />
             </button>
           ) : (
             <button
               type="button"
-              className="inline-flex h-[102px] w-[102px] cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-2 text-center text-xs leading-5 text-slate-600"
+              className="inline-flex size-26 cursor-pointer items-center justify-center rounded-sm border border-dashed border-base-300 bg-base-200 p-2 text-center text-xs leading-5 text-base-content/70"
               onClick={() => void openPreview()}
             >
               缩略图缺失，点击预览原图
             </button>
           )}
           <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-slate-500">点击缩略图可预览原图</span>
-              <button type="button" className="ui-link-button ui-link-danger cursor-pointer" onClick={() => void handleDelete()}>
-                删除背景图
-              </button>
-              <button type="button" className="ui-link-button cursor-pointer" onClick={() => void handleDownload()}>
-                下载原图
-              </button>
-              {!thumbnail.thumbnailUrl ? (
-                <button type="button" className="ui-link-button cursor-pointer" disabled={regeneratingThumbnail} onClick={() => void handleRegenerateThumbnail()}>
-                  {regeneratingThumbnail ? "重新生成中..." : "重新生成缩略图"}
+            <div className="flex flex-wrap items-center">
+              <span className="text-xs text-base-content/60">点击缩略图可预览原图</span>
+              <div className="flex items-center gap-1 ml-1">
+                <button type="button" className="btn btn-link btn-sm p-0 text-error" onClick={() => void handleDelete()}>
+                  删除背景图
                 </button>
-              ) : null}
+                <button type="button" className="btn btn-link btn-sm p-0" onClick={() => void handleDownload()}>
+                  下载原图
+                </button>
+                {!thumbnail.thumbnailUrl ? (
+                  <button type="button" className="btn btn-link btn-sm p-0" disabled={regeneratingThumbnail} onClick={() => void handleRegenerateThumbnail()}>
+                    {regeneratingThumbnail ? "重新生成中..." : "重新生成缩略图"}
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="flex gap-2">
-              <button type="button" className="ui-button cursor-pointer" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
+              <button type="button" className="btn btn-primary btn-sm" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
                 {uploading ? "上传中..." : "替换图片"}
               </button>
             </div>
@@ -291,8 +292,8 @@ export function Background(props: BackgroundProps) {
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-3">
-          <div className="text-xs text-slate-500">还没有设置背景图</div>
-          <button type="button" className="ui-button cursor-pointer" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
+          <div className="text-xs text-base-content/60">还没有设置背景图</div>
+          <button type="button" className="btn btn-primary btn-sm" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
             {uploading ? "上传中..." : "上传图片"}
           </button>
         </div>
@@ -301,7 +302,7 @@ export function Background(props: BackgroundProps) {
         ? createPortal(
             // 图片预览层级最高，需要脱离抽屉容器，避免被滚动和裁剪影响。
             <div
-              className={`fixed inset-0 z-[60] flex items-center justify-center p-4 transition-all duration-200 ease-out ${
+              className={`fixed inset-0 z-60 flex items-center justify-center p-4 transition-all duration-200 ease-out ${
                 previewOpen ? "pointer-events-auto bg-black/45 opacity-100" : "pointer-events-none bg-black/0 opacity-0"
               }`}
               role="presentation"
@@ -310,7 +311,7 @@ export function Background(props: BackgroundProps) {
               <img
                 src={imagePreviewUrl}
                 alt="背景图预览"
-                className={`max-h-[90vh] max-w-[min(1200px,92vw)] rounded-xl transition-all duration-200 ease-out ${
+                className={`max-h-[90vh] max-w-[min(1200px,92vw)] rounded-sm transition-all duration-200 ease-out ${
                   previewOpen ? "scale-100 translate-y-0 opacity-100" : "scale-95 translate-y-2 opacity-0"
                 }`}
                 onClick={(event) => {

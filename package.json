@@ -1,37 +1,41 @@
 {
   "name": "wanwan",
-  "displayName": "Wanwan",
   "version": "0.0.1",
   "description": "",
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build",
     "package": "plasmo package",
-    "clean": "sh ./scripts/clean.sh"
+    "clean": "sh ./scripts/clean.sh",
+    "postinstall": "node scripts/patch-tailwind-v4-deps.cjs"
   },
   "dependencies": {
     "@dnd-kit/collision": "0.3.2",
     "@dnd-kit/helpers": "0.3.2",
     "@dnd-kit/react": "0.3.2",
     "@plasmohq/storage": "^1.15.0",
-    "ahooks": "^3.9.6",
-    "dexie": "^4.4.0",
+    "ahooks": "^3.9.7",
+    "dexie": "^4.4.1",
+    "lucide-react": "^1.7.0",
     "plasmo": "0.90.5",
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "4.2.2",
     "@types/chrome": "0.1.38",
     "@types/node": "25.5.0",
-    "@types/react": "18.3.28",
-    "@types/react-dom": "18.3.7",
-    "autoprefixer": "10.4.27",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "daisyui": "^5.5.19",
     "postcss": "^8.5.8",
     "prettier": "3.8.1",
-    "tailwindcss": "3.4.19",
-    "typescript": "5.9.3"
+    "tailwindcss": "4.2.2",
+    "typescript": "6.0.2"
   },
   "manifest": {
+    "name": "__MSG_extensionName__",
+    "default_locale": "zh_CN",
     "permissions": [
       "tabs"
     ]
