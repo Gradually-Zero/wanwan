@@ -13,6 +13,7 @@ const SETTING_DRAWER_TRANSITION_MS = 300;
 function IndexNewtab() {
   const [settingDrawerMounted, setSettingDrawerMounted] = useState(false);
   const [settingDrawerOpen, setSettingDrawerOpen] = useState(false);
+  const [sortModeOpen, setSortModeOpen] = useState(false);
   const [commonSwitch] = useStorage({ instance: local, key: commonSwitchKey }, false);
   const [commonLinks] = useStorage<CommonLink[]>({ instance: local, key: commonLinksKey }, []);
   const currentImageObjectUrlRef = useRef<string | null>(null);
@@ -50,6 +51,7 @@ function IndexNewtab() {
   const openSettingDrawer = () => {
     if (settingDrawerTimerRef.current) {
       clearTimeout(settingDrawerTimerRef.current);
+      settingDrawerTimerRef.current = null;
     }
     setSettingDrawerMounted(true);
     window.requestAnimationFrame(() => {
@@ -61,11 +63,41 @@ function IndexNewtab() {
     setSettingDrawerOpen(false);
     if (settingDrawerTimerRef.current) {
       clearTimeout(settingDrawerTimerRef.current);
+      settingDrawerTimerRef.current = null;
     }
     settingDrawerTimerRef.current = setTimeout(() => {
+      if (sortModeOpen) {
+        settingDrawerTimerRef.current = null;
+        return;
+      }
       setSettingDrawerMounted(false);
       settingDrawerTimerRef.current = null;
     }, SETTING_DRAWER_TRANSITION_MS);
+  };
+
+  const openSortMode = () => {
+    if (settingDrawerTimerRef.current) {
+      clearTimeout(settingDrawerTimerRef.current);
+      settingDrawerTimerRef.current = null;
+    }
+    setSettingDrawerOpen(false);
+    setSortModeOpen(true);
+  };
+
+  const closeSortMode = () => {
+    if (settingDrawerTimerRef.current) {
+      clearTimeout(settingDrawerTimerRef.current);
+      settingDrawerTimerRef.current = null;
+    }
+    setSortModeOpen(false);
+    openSettingDrawer();
+  };
+
+  const onSettingDrawerTransitionEnd = () => {
+    if (settingDrawerOpen || sortModeOpen) {
+      return;
+    }
+    setSettingDrawerMounted(false);
   };
 
   return (
@@ -78,7 +110,7 @@ function IndexNewtab() {
         }}
       >
         {commonSwitch ? (
-          <div className="grid w-full max-w-240 grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5">
+          <div className="common-links-grid">
             {(commonLinks ?? []).map((item) => (
               <a
                 key={item.id}
@@ -99,16 +131,22 @@ function IndexNewtab() {
         // 新标签页设置抽屉的基础层。
         <div className={`fixed inset-0 z-40 ${settingDrawerOpen ? "pointer-events-auto" : "pointer-events-none"}`} role="presentation">
           <div
-            className={`absolute inset-0 bg-neutral/35 backdrop-blur-[1px] transition-opacity duration-300 ease-out ${settingDrawerOpen ? "opacity-100" : "opacity-0"}`}
+            className={`absolute inset-0 bg-neutral/35 backdrop-blur-[1px] transition-opacity duration-200 ease-out ${settingDrawerOpen ? "opacity-100" : "opacity-0"}`}
             onClick={() => {
               closeSettingDrawer();
             }}
           />
           <aside
             data-setting-drawer="panel"
-            className={`absolute right-0 top-0 h-screen w-[min(980px,88vw)] overflow-auto border-l border-base-300 bg-base-200/95 p-4 text-base-content shadow-[-12px_0_32px_rgba(15,23,42,0.18)] backdrop-blur-md transition-transform duration-300 ease-[cubic-bezier(0,0,0.2,1)] will-change-transform max-md:w-screen ${
+            className={`absolute right-0 top-0 h-screen w-[min(980px,88vw)] overflow-auto border-l border-base-300 bg-base-200/95 p-4 text-base-content shadow-[-12px_0_32px_rgba(15,23,42,0.18)] backdrop-blur-md transition-transform duration-200 ease-out will-change-transform max-md:w-screen ${
               settingDrawerOpen ? "translate-x-0" : "translate-x-full"
             }`}
+            onTransitionEnd={(event) => {
+              if (event.target !== event.currentTarget || event.propertyName !== "transform") {
+                return;
+              }
+              onSettingDrawerTransitionEnd();
+            }}
             onClick={(event) => {
               event.stopPropagation();
             }}
@@ -122,7 +160,7 @@ function IndexNewtab() {
                 </section>
                 <section className="card border border-base-300 bg-base-100 shadow-sm">
                   <div className="card-body p-4">
-                    <CommonSettings />
+                    <CommonSettings sortModalOpen={sortModeOpen} onOpenSortModal={openSortMode} onCloseSortModal={closeSortMode} />
                   </div>
                 </section>
               </div>

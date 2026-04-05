@@ -28,7 +28,14 @@ const noticeClassNameMap: Record<Notice["type"], string> = {
 
 type CommonFormMode = "add" | "edit";
 
-export function CommonSettings() {
+interface CommonSettingsProps {
+  sortModalOpen: boolean;
+  onOpenSortModal: () => void;
+  onCloseSortModal: () => void;
+}
+
+export function CommonSettings(props: CommonSettingsProps) {
+  const { sortModalOpen, onOpenSortModal, onCloseSortModal } = props;
   const [commonSwitch, setCommonSwitch] = useStorage({ instance: local, key: commonSwitchKey }, false);
   const [commonLinks, setCommonLinks] = useStorage<CommonLink[]>({ instance: local, key: commonLinksKey }, []);
   const [filterTitle, setFilterTitle] = useState("");
@@ -46,17 +53,13 @@ export function CommonSettings() {
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [bulkConfirmModalMounted, setBulkConfirmModalMounted] = useState(false);
   const [bulkConfirmModalOpen, setBulkConfirmModalOpen] = useState(false);
-  const [sortModalMounted, setSortModalMounted] = useState(false);
-  const [sortModalOpen, setSortModalOpen] = useState(false);
   const [sortPreviewBgUrl, setSortPreviewBgUrl] = useState<string | undefined>(undefined);
   const [sortPreviewBgLoading, setSortPreviewBgLoading] = useState(false);
-  const [sortDrawerHost, setSortDrawerHost] = useState<HTMLElement | null>(null);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
   const sortPreviewBgObjectUrlRef = useRef<string | undefined>(undefined);
   const formModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const confirmModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bulkConfirmModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sortModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   const canSubmit = useMemo(() => formTitle.trim().length > 0 && formUrl.trim().length > 0, [formTitle, formUrl]);
@@ -323,14 +326,6 @@ export function CommonSettings() {
   }, [commonLinks]);
 
   useEffect(() => {
-    if (!sortModalMounted) {
-      setSortDrawerHost(null);
-      return;
-    }
-    setSortDrawerHost(document.body);
-  }, [sortModalMounted]);
-
-  useEffect(() => {
     const clearPreviewBackground = () => {
       if (sortPreviewBgObjectUrlRef.current) {
         URL.revokeObjectURL(sortPreviewBgObjectUrlRef.current);
@@ -339,7 +334,8 @@ export function CommonSettings() {
       setSortPreviewBgUrl(undefined);
     };
 
-    if (!sortModalMounted) {
+    if (!sortModalOpen) {
+      setSortPreviewBgLoading(false);
       clearPreviewBackground();
       return;
     }
@@ -383,29 +379,7 @@ export function CommonSettings() {
     return () => {
       cancelled = true;
     };
-  }, [sortModalMounted]);
-
-  const openSortModal = () => {
-    if (sortModalTimerRef.current) {
-      clearTimeout(sortModalTimerRef.current);
-      sortModalTimerRef.current = null;
-    }
-    setSortModalMounted(true);
-    window.requestAnimationFrame(() => {
-      setSortModalOpen(true);
-    });
-  };
-
-  const closeSortModal = () => {
-    setSortModalOpen(false);
-    if (sortModalTimerRef.current) {
-      clearTimeout(sortModalTimerRef.current);
-    }
-    sortModalTimerRef.current = setTimeout(() => {
-      setSortModalMounted(false);
-      sortModalTimerRef.current = null;
-    }, MODAL_TRANSITION_MS);
-  };
+  }, [sortModalOpen]);
 
   useEffect(
     () => () => {
@@ -417,9 +391,6 @@ export function CommonSettings() {
       }
       if (bulkConfirmModalTimerRef.current) {
         clearTimeout(bulkConfirmModalTimerRef.current);
-      }
-      if (sortModalTimerRef.current) {
-        clearTimeout(sortModalTimerRef.current);
       }
     },
     []
@@ -434,6 +405,7 @@ export function CommonSettings() {
             ref={importInputRef}
             type="file"
             accept=".json,application/json"
+            name="common-import-file"
             className="hidden"
             onChange={(event) => {
               void onImport(event.target.files?.[0]);
@@ -481,7 +453,7 @@ export function CommonSettings() {
                 <button type="button" className="btn btn-link btn-sm px-1 text-error" disabled={(commonLinks ?? []).length === 0 || sortModalOpen} onClick={() => setBulkMode(true)}>
                   批量删除
                 </button>
-                <button type="button" className="btn btn-link btn-sm px-1" disabled={(commonLinks ?? []).length < 2} onClick={openSortModal}>
+                <button type="button" className="btn btn-link btn-sm px-1" disabled={(commonLinks ?? []).length < 2} onClick={onOpenSortModal}>
                   排序
                 </button>
               </>
@@ -489,8 +461,22 @@ export function CommonSettings() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 pb-3">
-          <input className="input min-w-44 flex-1" value={filterTitle} placeholder="搜索名称" onChange={(event) => setFilterTitle(event.target.value)} />
-          <input className="input min-w-56 basis-56 grow" value={filterUrl} placeholder="搜索链接" onChange={(event) => setFilterUrl(event.target.value)} />
+          <input
+            id="common-filter-title"
+            name="common-filter-title"
+            className="input min-w-44 flex-1"
+            value={filterTitle}
+            placeholder="搜索名称"
+            onChange={(event) => setFilterTitle(event.target.value)}
+          />
+          <input
+            id="common-filter-url"
+            name="common-filter-url"
+            className="input min-w-56 basis-56 grow"
+            value={filterUrl}
+            placeholder="搜索链接"
+            onChange={(event) => setFilterUrl(event.target.value)}
+          />
         </div>
         {(commonLinks ?? []).length === 0 ? (
           <div className="py-3 text-xs text-base-content/60">暂无常用，请先添加链接</div>
@@ -522,8 +508,8 @@ export function CommonSettings() {
         onClose={closeFormModal}
         onConfirm={onSaveForm}
       >
-        <input className="input w-full" value={formTitle} placeholder="名称，如：GitHub" onChange={(event) => setFormTitle(event.target.value)} />
-        <input className="input w-full" value={formUrl} placeholder="链接，如：github.com" onChange={(event) => setFormUrl(event.target.value)} />
+        <input id="common-form-title" name="common-form-title" className="input w-full" value={formTitle} placeholder="名称，如：GitHub" onChange={(event) => setFormTitle(event.target.value)} />
+        <input id="common-form-url" name="common-form-url" className="input w-full" value={formUrl} placeholder="链接，如：github.com" onChange={(event) => setFormUrl(event.target.value)} />
       </FormModal>
       <ConfirmModal
         title="删除常用"
@@ -543,11 +529,12 @@ export function CommonSettings() {
         onClose={closeBulkDeleteModal}
         onConfirm={onConfirmBulkDelete}
       />
-      {sortModalMounted && sortDrawerHost
+      {typeof document !== "undefined"
         ? createPortal(
             <div
-              className={`fixed inset-0 z-50 overflow-hidden bg-cover bg-center bg-no-repeat transition-all duration-200 ease-out before:pointer-events-none before:absolute before:inset-0 before:bg-linear-to-b before:from-slate-900/20 before:to-slate-900/30 ${
-                sortModalOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+              aria-hidden={!sortModalOpen}
+              className={`fixed inset-0 z-50 overflow-hidden bg-cover bg-center bg-no-repeat transition-all duration-200 ease-out ${
+                sortModalOpen ? "pointer-events-auto visible opacity-100" : "pointer-events-none invisible opacity-0"
               }`}
               style={sortPreviewBgUrl ? { backgroundImage: `url(${sortPreviewBgUrl})` } : undefined}
             >
@@ -561,10 +548,9 @@ export function CommonSettings() {
               >
                 <button
                   type="button"
+                  tabIndex={sortModalOpen ? 0 : -1}
                   className="btn rounded-full border-0 bg-slate-900/70 px-4 text-sm text-slate-50 shadow-xl hover:bg-slate-900/80"
-                  onClick={() => {
-                    closeSortModal();
-                  }}
+                  onClick={onCloseSortModal}
                 >
                   退出排序
                 </button>
@@ -576,7 +562,7 @@ export function CommonSettings() {
               >
                 {(commonLinks ?? []).length > 0 ? (
                   <DragDropProvider onDragEnd={onSortEnd}>
-                    <div className="grid w-full max-w-300 grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5 max-md:max-w-full">
+                    <div className="common-links-grid">
                       {(commonLinks ?? []).map((item, index) => (
                         <SortablePreviewCard key={item.id} item={item} index={index} />
                       ))}
@@ -588,7 +574,7 @@ export function CommonSettings() {
               </div>
               {sortPreviewBgLoading ? <div className="absolute bottom-2.5 right-2.5 z-20 rounded-full bg-slate-900/55 px-2 py-1 text-xs text-slate-50">背景图加载中...</div> : null}
             </div>,
-            sortDrawerHost
+            document.body
           )
         : null}
     </div>

@@ -99,4 +99,18 @@ body {
   .input:focus-within {
     outline-offset: unset;
   }
+
+  .common-links-grid {
+    display: grid;
+    width: 100%;
+    max-width: 1156px;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: calc(var(--spacing) * 3.5);
+  }
+
+  @media not all and (width >= 48rem) {
+    .common-links-grid {
+      max-width: 100%;
+    }
+  }
 }
