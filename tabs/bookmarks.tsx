@@ -58,6 +58,7 @@ export default function BookmarksPage() {
   const filteredBookmarkIds = useMemo(() => filteredBookmarkLinks.map((item) => item.id), [filteredBookmarkLinks]);
   const hasFilteredBookmarkLinks = filteredBookmarkIds.length > 0;
   const allFilteredBookmarkSelected = hasFilteredBookmarkLinks && filteredBookmarkIds.every((id) => selectedIds.has(id));
+  const selectedBookmarkLinks = useMemo(() => (bookmarkLinks ?? []).filter((item) => selectedIds.has(item.id)), [bookmarkLinks, selectedIds]);
 
   const setNoticeText = (type: Notice["type"], text: string) => {
     setNotice({ type, text });
@@ -177,6 +178,23 @@ export default function BookmarksPage() {
       }
       return next;
     });
+  };
+
+  const openSelectedBookmarks = async () => {
+    if (selectedBookmarkLinks.length === 0) {
+      return;
+    }
+
+    try {
+      for (const item of selectedBookmarkLinks) {
+        await chrome.tabs.create({
+          url: item.url
+        });
+      }
+      setNoticeText("success", `已打开 ${selectedBookmarkLinks.length} 项书签`);
+    } catch {
+      setNoticeText("error", "批量打开失败，请稍后重试");
+    }
   };
 
   const onSaveForm = () => {
@@ -355,11 +373,14 @@ export default function BookmarksPage() {
                     <button type="button" className="btn btn-link btn-sm px-1" disabled={!hasFilteredBookmarkLinks} onClick={toggleSelectAllFiltered}>
                       {allFilteredBookmarkSelected ? "取消当前所有" : "勾选当前所有"}
                     </button>
-                    <button type="button" className="btn btn-link btn-sm px-1" onClick={exitBulkMode}>
-                      取消
+                    <button type="button" className="btn btn-link btn-sm px-1" disabled={selectedBookmarkLinks.length === 0} onClick={() => void openSelectedBookmarks()}>
+                      打开所选
                     </button>
                     <button type="button" className="btn btn-link btn-sm px-1 text-error" disabled={selectedIds.size === 0} onClick={openBulkDeleteModal}>
                       删除所选
+                    </button>
+                    <button type="button" className="btn btn-link btn-sm px-1" onClick={exitBulkMode}>
+                      取消
                     </button>
                   </>
                 ) : (
@@ -367,8 +388,8 @@ export default function BookmarksPage() {
                     <button type="button" className="btn btn-link btn-sm px-1" onClick={() => openFormModal("add")}>
                       添加书签
                     </button>
-                    <button type="button" className="btn btn-link btn-sm px-1 text-error" disabled={(bookmarkLinks ?? []).length === 0} onClick={() => setBulkMode(true)}>
-                      批量删除
+                    <button type="button" className="btn btn-link btn-sm px-1" disabled={(bookmarkLinks ?? []).length === 0} onClick={() => setBulkMode(true)}>
+                      批量模式
                     </button>
                   </>
                 )}
@@ -386,14 +407,21 @@ export default function BookmarksPage() {
                   <div key={item.id} className={`flex cursor-default justify-between gap-3 py-2.5 ${index > 0 ? "border-t border-base-200" : ""}`}>
                     <div className="flex w-full min-w-0 items-center gap-3">
                       {bulkMode ? <input className="checkbox checkbox-sm mt-0.5 shrink-0" type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} /> : null}
-                      <div className="w-full min-w-0">
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full min-w-0 rounded-md px-1 py-1 text-left transition hover:bg-base-200/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                        title={`在新标签页打开 ${item.title}`}
+                        aria-label={`在新标签页打开 ${item.title}`}
+                      >
                         <div className="block truncate text-sm text-base-content" title={item.title}>
                           {item.title}
                         </div>
                         <div className="block truncate text-xs text-base-content/60" title={item.url}>
                           {item.url}
                         </div>
-                      </div>
+                      </a>
                     </div>
                     {!bulkMode ? (
                       <div className="inline-flex items-center gap-2 whitespace-nowrap">
