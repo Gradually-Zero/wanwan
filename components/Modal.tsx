@@ -10,7 +10,7 @@ interface ModalShellProps extends PropsWithChildren {
   footer?: ReactNode;
 }
 
-export interface FormModalProps extends PropsWithChildren {
+interface FormModalProps extends PropsWithChildren {
   title: string;
   mounted: boolean;
   open: boolean;
@@ -22,7 +22,7 @@ export interface FormModalProps extends PropsWithChildren {
   onConfirm: () => void;
 }
 
-export interface ConfirmModalProps {
+interface ConfirmModalProps {
   title: string;
   description: string;
   mounted: boolean;

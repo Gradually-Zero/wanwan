@@ -6,11 +6,13 @@ import { directionBiased } from "@dnd-kit/collision";
 import { useSortable } from "@dnd-kit/react/sortable";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { imageDb } from "~indexedDB/ImageDB";
-import { commonLinksKey, commonSwitchKey, getBIS, local } from "~storage/local";
-import { createCommonId, getCommonExportFileName, normalizeUrl, parseCommonLinksJson, regenerateCommonIds, serializeCommonLinks } from "~utils/link";
+import { useCommonLinks } from "~hooks/useLinks";
 import { ConfirmModal, FormModal } from "~components/Modal";
+import { commonSwitchKey, getBIS, local } from "~storage/local";
+import { addCommonLink, removeCommonLink, replaceCommonLinks, updateCommonLink } from "~indexedDB/LinksDB";
+import { createCommonId, getCommonExportFileName, normalizeUrl, parseCommonLinksJson, regenerateCommonIds, serializeCommonLinks } from "~utils/link";
 import type { DragDropEventHandlers } from "@dnd-kit/react";
-import type { CommonLink } from "~storage/local";
+import type { CommonLink } from "~indexedDB/LinksDB";
 
 const MODAL_TRANSITION_MS = 200;
 
@@ -37,7 +39,7 @@ interface CommonSettingsProps {
 export function CommonSettings(props: CommonSettingsProps) {
   const { sortModalOpen, onOpenSortModal, onCloseSortModal } = props;
   const [commonSwitch, setCommonSwitch] = useStorage({ instance: local, key: commonSwitchKey }, false);
-  const [commonLinks, setCommonLinks] = useStorage<CommonLink[]>({ instance: local, key: commonLinksKey }, []);
+  const { items: commonLinks } = useCommonLinks();
   const [filterTitle, setFilterTitle] = useState("");
   const [filterUrl, setFilterUrl] = useState("");
   const [bulkMode, setBulkMode] = useState(false);
@@ -67,7 +69,7 @@ export function CommonSettings(props: CommonSettingsProps) {
     const normalizedTitle = filterTitle.trim().toLowerCase();
     const normalizedUrl = filterUrl.trim().toLowerCase();
 
-    return (commonLinks ?? []).filter((item) => {
+    return commonLinks.filter((item) => {
       const matchesTitle = !normalizedTitle || item.title.toLowerCase().includes(normalizedTitle);
       const matchesUrl = !normalizedUrl || item.url.toLowerCase().includes(normalizedUrl);
       return matchesTitle && matchesUrl;
@@ -197,7 +199,7 @@ export function CommonSettings(props: CommonSettingsProps) {
     });
   };
 
-  const onSaveForm = () => {
+  const onSaveForm = async () => {
     const nextTitle = formTitle.trim();
     const nextUrl = normalizeUrl(formUrl);
     if (!nextTitle || !nextUrl) {
@@ -212,7 +214,7 @@ export function CommonSettings(props: CommonSettingsProps) {
     }
 
     if (formMode === "add") {
-      const exists = (commonLinks ?? []).some((item) => item.url === nextUrl);
+      const exists = commonLinks.some((item) => item.url === nextUrl);
       if (exists) {
         setNoticeText("warning", "该常用链接已存在");
         return;
@@ -220,64 +222,75 @@ export function CommonSettings(props: CommonSettingsProps) {
     }
 
     if (formMode === "edit" && editingId) {
-      const exists = (commonLinks ?? []).some((item) => item.id !== editingId && item.url === nextUrl);
+      const exists = commonLinks.some((item) => item.id !== editingId && item.url === nextUrl);
       if (exists) {
         setNoticeText("warning", "该常用链接已存在");
         return;
       }
 
-      setCommonLinks(
-        (commonLinks ?? []).map((item) =>
-          item.id === editingId
-            ? {
-                ...item,
-                title: nextTitle,
-                url: nextUrl
-              }
-            : item
-        )
-      );
-      closeFormModal();
-      setNoticeText("success", "已更新常用");
+      try {
+        await updateCommonLink(editingId, {
+          title: nextTitle,
+          url: nextUrl
+        });
+        closeFormModal();
+        setNoticeText("success", "已更新常用");
+      } catch {
+        setNoticeText("error", "保存失败，请稍后重试");
+      }
       return;
     }
 
-    const nextItem: CommonLink = {
-      id: createCommonId(),
-      title: nextTitle,
-      url: nextUrl
-    };
-    setCommonLinks([...(commonLinks ?? []), nextItem]);
-    closeFormModal();
-    setNoticeText("success", "已添加到常用");
+    try {
+      await addCommonLink({
+        id: createCommonId(),
+        title: nextTitle,
+        url: nextUrl
+      });
+      closeFormModal();
+      setNoticeText("success", "已添加到常用");
+    } catch {
+      setNoticeText("error", "保存失败，请稍后重试");
+    }
   };
 
-  const onConfirmDelete = () => {
+  const onConfirmDelete = async () => {
     if (!deleteTarget) {
       return;
     }
-    setCommonLinks((commonLinks ?? []).filter((item) => item.id !== deleteTarget.id));
-    closeDeleteModal();
-    setNoticeText("success", "已从常用中删除");
+    try {
+      await removeCommonLink(deleteTarget.id);
+      closeDeleteModal();
+      setNoticeText("success", "已从常用中删除");
+    } catch {
+      setNoticeText("error", "删除失败，请稍后重试");
+    }
   };
 
-  const onConfirmBulkDelete = () => {
+  const onConfirmBulkDelete = async () => {
     if (selectedIds.size === 0) {
       return;
     }
-    setCommonLinks((commonLinks ?? []).filter((item) => !selectedIds.has(item.id)));
-    closeBulkDeleteModal();
-    const deletedCount = selectedIds.size;
-    exitBulkMode();
-    setNoticeText("success", `已删除 ${deletedCount} 项常用`);
+    try {
+      const nextLinks = commonLinks.filter((item) => !selectedIds.has(item.id));
+      await replaceCommonLinks(nextLinks);
+      closeBulkDeleteModal();
+      const deletedCount = selectedIds.size;
+      exitBulkMode();
+      setNoticeText("success", `已删除 ${deletedCount} 项常用`);
+    } catch {
+      setNoticeText("error", "删除失败，请稍后重试");
+    }
   };
 
   const onSortEnd: NonNullable<DragDropEventHandlers["onDragEnd"]> = (event) => {
-    setCommonLinks((items) => move(items ?? [], event));
+    void replaceCommonLinks(move(commonLinks, event)).catch(() => {
+      setNoticeText("error", "排序失败，请稍后重试");
+    });
   };
 
   const onExport = () => {
-    const payload = serializeCommonLinks(commonLinks ?? []);
+    const payload = serializeCommonLinks(commonLinks);
     const exportBlob = new Blob([payload], { type: "application/json;charset=utf-8" });
     const exportUrl = URL.createObjectURL(exportBlob);
     const link = document.createElement("a");
@@ -301,7 +314,7 @@ export function CommonSettings(props: CommonSettingsProps) {
         return;
       }
 
-      setCommonLinks([...(commonLinks ?? []), ...importedLinks]);
+      await replaceCommonLinks([...commonLinks, ...importedLinks]);
       setCommonSwitch(true);
       setNoticeText("success", `已导入 ${importedLinks.length} 项常用`);
     } catch (error) {
@@ -315,7 +328,7 @@ export function CommonSettings(props: CommonSettingsProps) {
   };
 
   useEffect(() => {
-    const validIds = new Set((commonLinks ?? []).map((item) => item.id));
+    const validIds = new Set(commonLinks.map((item) => item.id));
     setSelectedIds((prev) => {
       const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
       if (next.size === prev.size) {
@@ -431,7 +444,7 @@ export function CommonSettings(props: CommonSettingsProps) {
       ) : null}
       <div className="rounded-2xl border border-base-300 bg-base-100 p-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
-          <span className="text-xs text-base-content/60">{bulkMode ? `已选 ${selectedIds.size} 项` : `显示 ${filteredCommonLinks.length} / 共 ${(commonLinks ?? []).length} 项`}</span>
+          <span className="text-xs text-base-content/60">{bulkMode ? `已选 ${selectedIds.size} 项` : `显示 ${filteredCommonLinks.length} / 共 ${commonLinks.length} 项`}</span>
           <div className="flex items-center gap-2">
             {bulkMode ? (
               <>
@@ -450,10 +463,10 @@ export function CommonSettings(props: CommonSettingsProps) {
                 <button type="button" className="btn btn-link btn-sm px-1" onClick={() => openFormModal("add")}>
                   添加
                 </button>
-                <button type="button" className="btn btn-link btn-sm px-1 text-error" disabled={(commonLinks ?? []).length === 0 || sortModalOpen} onClick={() => setBulkMode(true)}>
+                <button type="button" className="btn btn-link btn-sm px-1 text-error" disabled={commonLinks.length === 0 || sortModalOpen} onClick={() => setBulkMode(true)}>
                   批量删除
                 </button>
-                <button type="button" className="btn btn-link btn-sm px-1" disabled={(commonLinks ?? []).length < 2} onClick={onOpenSortModal}>
+                <button type="button" className="btn btn-link btn-sm px-1" disabled={commonLinks.length < 2} onClick={onOpenSortModal}>
                   排序
                 </button>
               </>
@@ -478,7 +491,7 @@ export function CommonSettings(props: CommonSettingsProps) {
             onChange={(event) => setFilterUrl(event.target.value)}
           />
         </div>
-        {(commonLinks ?? []).length === 0 ? (
+        {commonLinks.length === 0 ? (
           <div className="py-3 text-xs text-base-content/60">暂无常用，请先添加链接</div>
         ) : filteredCommonLinks.length > 0 ? (
           <div className="flex flex-col">
@@ -506,7 +519,9 @@ export function CommonSettings(props: CommonSettingsProps) {
         confirmText={formMode === "add" ? "添加" : "保存"}
         disableConfirm={!canSubmit}
         onClose={closeFormModal}
-        onConfirm={onSaveForm}
+        onConfirm={() => {
+          void onSaveForm();
+        }}
       >
         <input id="common-form-title" name="common-form-title" className="input w-full" value={formTitle} placeholder="名称，如：GitHub" onChange={(event) => setFormTitle(event.target.value)} />
         <input id="common-form-url" name="common-form-url" className="input w-full" value={formUrl} placeholder="链接，如：github.com" onChange={(event) => setFormUrl(event.target.value)} />
@@ -518,7 +533,9 @@ export function CommonSettings(props: CommonSettingsProps) {
         open={confirmModalOpen}
         confirmText="删除"
         onClose={closeDeleteModal}
-        onConfirm={onConfirmDelete}
+        onConfirm={() => {
+          void onConfirmDelete();
+        }}
       />
       <ConfirmModal
         title="批量删除常用"
@@ -527,7 +544,9 @@ export function CommonSettings(props: CommonSettingsProps) {
         open={bulkConfirmModalOpen}
         confirmText="删除所选"
         onClose={closeBulkDeleteModal}
-        onConfirm={onConfirmBulkDelete}
+        onConfirm={() => {
+          void onConfirmBulkDelete();
+        }}
       />
       {typeof document !== "undefined"
         ? createPortal(
@@ -560,10 +579,10 @@ export function CommonSettings(props: CommonSettingsProps) {
                   sortModalOpen ? "translate-y-0 scale-100 opacity-100" : "translate-y-3 scale-95 opacity-0"
                 }`}
               >
-                {(commonLinks ?? []).length > 0 ? (
+                {commonLinks.length > 0 ? (
                   <DragDropProvider onDragEnd={onSortEnd}>
                     <div className="common-links-grid">
-                      {(commonLinks ?? []).map((item, index) => (
+                      {commonLinks.map((item, index) => (
                         <SortablePreviewCard key={item.id} item={item} index={index} />
                       ))}
                     </div>

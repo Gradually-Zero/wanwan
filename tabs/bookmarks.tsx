@@ -1,9 +1,15 @@
-import { useStorage } from "@plasmohq/storage/hook";
+import { move } from "@dnd-kit/helpers";
+import { GripVertical } from "lucide-react";
+import { DragDropProvider } from "@dnd-kit/react";
+import { directionBiased } from "@dnd-kit/collision";
+import { useSortable } from "@dnd-kit/react/sortable";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { bookmarksLinksKey, local } from "~storage/local";
+import { useBookmarkLinks } from "~hooks/useLinks";
 import { ConfirmModal, FormModal } from "~components/Modal";
+import { addBookmarkLink, removeBookmarkLink, replaceBookmarkLinks, updateBookmarkLink } from "~indexedDB/LinksDB";
 import { createCommonId, getBookmarkExportFileName, normalizeUrl, parseBookmarkLinksJson, regenerateBookmarkIds, serializeBookmarkLinks } from "~utils/link";
-import type { BookmarkLink } from "~storage/local";
+import type { DragDropEventHandlers } from "@dnd-kit/react";
+import type { BookmarkLink } from "~indexedDB/LinksDB";
 import "../styles/main.css";
 
 const MODAL_TRANSITION_MS = 200;
@@ -23,7 +29,7 @@ const noticeClassNameMap: Record<Notice["type"], string> = {
 type BookmarkFormMode = "add" | "edit";
 
 export default function BookmarksPage() {
-  const [bookmarkLinks, setBookmarkLinks] = useStorage<BookmarkLink[]>({ instance: local, key: bookmarksLinksKey }, []);
+  const { items: bookmarkLinks } = useBookmarkLinks();
   const [filterTitle, setFilterTitle] = useState("");
   const [filterUrl, setFilterUrl] = useState("");
   const [bulkMode, setBulkMode] = useState(false);
@@ -49,7 +55,7 @@ export default function BookmarksPage() {
     const normalizedTitle = filterTitle.trim().toLowerCase();
     const normalizedUrl = filterUrl.trim().toLowerCase();
 
-    return (bookmarkLinks ?? []).filter((item) => {
+    return bookmarkLinks.filter((item) => {
       const matchesTitle = !normalizedTitle || item.title.toLowerCase().includes(normalizedTitle);
       const matchesUrl = !normalizedUrl || item.url.toLowerCase().includes(normalizedUrl);
       return matchesTitle && matchesUrl;
@@ -58,7 +64,9 @@ export default function BookmarksPage() {
   const filteredBookmarkIds = useMemo(() => filteredBookmarkLinks.map((item) => item.id), [filteredBookmarkLinks]);
   const hasFilteredBookmarkLinks = filteredBookmarkIds.length > 0;
   const allFilteredBookmarkSelected = hasFilteredBookmarkLinks && filteredBookmarkIds.every((id) => selectedIds.has(id));
-  const selectedBookmarkLinks = useMemo(() => (bookmarkLinks ?? []).filter((item) => selectedIds.has(item.id)), [bookmarkLinks, selectedIds]);
+  const selectedBookmarkLinks = useMemo(() => bookmarkLinks.filter((item) => selectedIds.has(item.id)), [bookmarkLinks, selectedIds]);
+  const hasActiveFilter = filterTitle.trim().length > 0 || filterUrl.trim().length > 0;
+  const canSortBookmarks = !bulkMode && !hasActiveFilter && bookmarkLinks.length > 1;
 
   const setNoticeText = (type: Notice["type"], text: string) => {
     setNotice({ type, text });
@@ -197,7 +205,7 @@ export default function BookmarksPage() {
     }
   };
 
-  const onSaveForm = () => {
+  const onSaveForm = async () => {
     const nextTitle = formTitle.trim();
     const nextUrl = normalizeUrl(formUrl);
     if (!nextTitle || !nextUrl) {
@@ -211,61 +219,75 @@ export default function BookmarksPage() {
       return;
     }
 
-    const exists = (bookmarkLinks ?? []).some((item) => item.id !== editingId && item.url === nextUrl);
+    const exists = bookmarkLinks.some((item) => item.id !== editingId && item.url === nextUrl);
     if (exists) {
       setNoticeText("warning", "该书签已存在");
       return;
     }
 
-    if (formMode === "edit" && editingId) {
-      setBookmarkLinks(
-        (bookmarkLinks ?? []).map((item) =>
-          item.id === editingId
-            ? {
-                ...item,
-                title: nextTitle,
-                url: nextUrl
-              }
-            : item
-        )
-      );
-      closeFormModal();
-      setNoticeText("success", "已更新书签");
-      return;
-    }
+    try {
+      if (formMode === "edit" && editingId) {
+        await updateBookmarkLink(editingId, {
+          title: nextTitle,
+          url: nextUrl
+        });
+        closeFormModal();
+        setNoticeText("success", "已更新书签");
+        return;
+      }
 
-    const nextItem: BookmarkLink = {
-      id: createCommonId(),
-      title: nextTitle,
-      url: nextUrl
-    };
-    setBookmarkLinks([...(bookmarkLinks ?? []), nextItem]);
-    closeFormModal();
-    setNoticeText("success", "已添加到书签");
+      await addBookmarkLink({
+        id: createCommonId(),
+        title: nextTitle,
+        url: nextUrl
+      });
+      closeFormModal();
+      setNoticeText("success", "已添加到书签");
+    } catch {
+      setNoticeText("error", "保存失败，请稍后重试");
+    }
   };
 
-  const onConfirmDelete = () => {
+  const onConfirmDelete = async () => {
     if (!deleteTarget) {
       return;
     }
-    setBookmarkLinks((bookmarkLinks ?? []).filter((item) => item.id !== deleteTarget.id));
-    closeDeleteModal();
-    setNoticeText("success", "已从书签中删除");
+    try {
+      await removeBookmarkLink(deleteTarget.id);
+      closeDeleteModal();
+      setNoticeText("success", "已从书签中删除");
+    } catch {
+      setNoticeText("error", "删除失败，请稍后重试");
+    }
   };
 
-  const onConfirmBulkDelete = () => {
+  const onConfirmBulkDelete = async () => {
     if (selectedIds.size === 0) {
       return;
     }
-    setBookmarkLinks((bookmarkLinks ?? []).filter((item) => !selectedIds.has(item.id)));
-    closeBulkDeleteModal();
-    const deletedCount = selectedIds.size;
-    exitBulkMode();
-    setNoticeText("success", `已删除 ${deletedCount} 项书签`);
+    try {
+      const nextLinks = bookmarkLinks.filter((item) => !selectedIds.has(item.id));
+      await replaceBookmarkLinks(nextLinks);
+      closeBulkDeleteModal();
+      const deletedCount = selectedIds.size;
+      exitBulkMode();
+      setNoticeText("success", `已删除 ${deletedCount} 项书签`);
+    } catch {
+      setNoticeText("error", "删除失败，请稍后重试");
+    }
+  };
+
+  const onSortEnd: NonNullable<DragDropEventHandlers["onDragEnd"]> = (event) => {
+    if (!canSortBookmarks) {
+      return;
+    }
+    void replaceBookmarkLinks(move(bookmarkLinks, event)).catch(() => {
+      setNoticeText("error", "排序失败，请稍后重试");
+    });
   };
 
   const onExport = () => {
-    const payload = serializeBookmarkLinks(bookmarkLinks ?? []);
+    const payload = serializeBookmarkLinks(bookmarkLinks);
     const exportBlob = new Blob([payload], { type: "application/json;charset=utf-8" });
     const exportUrl = URL.createObjectURL(exportBlob);
     const link = document.createElement("a");
@@ -289,7 +311,7 @@ export default function BookmarksPage() {
         return;
       }
 
-      setBookmarkLinks([...(bookmarkLinks ?? []), ...importedLinks]);
+      await replaceBookmarkLinks([...bookmarkLinks, ...importedLinks]);
       setNoticeText("success", `已导入 ${importedLinks.length} 项书签`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "导入失败，请检查 JSON 文件";
@@ -317,7 +339,7 @@ export default function BookmarksPage() {
   );
 
   useEffect(() => {
-    const validIds = new Set((bookmarkLinks ?? []).map((item) => item.id));
+    const validIds = new Set(bookmarkLinks.map((item) => item.id));
     setSelectedIds((prev) => {
       const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
       if (next.size === prev.size) {
@@ -366,7 +388,7 @@ export default function BookmarksPage() {
           </div>
           <div className="card-body p-5 pt-0">
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
-              <span className="text-xs text-base-content/60">{bulkMode ? `已选 ${selectedIds.size} 项` : `显示 ${filteredBookmarkLinks.length} / 共 ${(bookmarkLinks ?? []).length} 项`}</span>
+              <span className="text-xs text-base-content/60">{bulkMode ? `已选 ${selectedIds.size} 项` : `显示 ${filteredBookmarkLinks.length} / 共 ${bookmarkLinks.length} 项`}</span>
               <div className="flex items-center gap-2">
                 {bulkMode ? (
                   <>
@@ -388,54 +410,56 @@ export default function BookmarksPage() {
                     <button type="button" className="btn btn-link btn-sm px-1" onClick={() => openFormModal("add")}>
                       添加书签
                     </button>
-                    <button type="button" className="btn btn-link btn-sm px-1" disabled={(bookmarkLinks ?? []).length === 0} onClick={() => setBulkMode(true)}>
+                    <button type="button" className="btn btn-link btn-sm px-1" disabled={bookmarkLinks.length === 0} onClick={() => setBulkMode(true)}>
                       批量模式
                     </button>
                   </>
                 )}
               </div>
             </div>
+            {!bulkMode && hasActiveFilter ? <div className="pb-2 text-xs text-base-content/60">筛选中不可排序，请清空筛选后拖拽把手。</div> : null}
             <div className="flex flex-wrap gap-2 pb-3">
               <input className="input min-w-45 flex-1" value={filterTitle} placeholder="搜索名称" onChange={(event) => setFilterTitle(event.target.value)} />
               <input className="input min-w-55 flex-[1.2]" value={filterUrl} placeholder="搜索链接" onChange={(event) => setFilterUrl(event.target.value)} />
             </div>
-            {(bookmarkLinks ?? []).length === 0 ? (
+            {bookmarkLinks.length === 0 ? (
               <div className="py-3 text-xs text-base-content/60">暂无书签，请先添加链接</div>
             ) : filteredBookmarkLinks.length > 0 ? (
-              <div className="flex flex-col">
-                {filteredBookmarkLinks.map((item, index) => (
-                  <div key={item.id} className={`flex cursor-default justify-between gap-3 py-2.5 ${index > 0 ? "border-t border-base-200" : ""}`}>
-                    <div className="flex w-full min-w-0 items-center gap-3">
-                      {bulkMode ? <input className="checkbox checkbox-sm mt-0.5 shrink-0" type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} /> : null}
-                      <a
-                        href={item.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="w-full min-w-0 rounded-md px-1 py-1 text-left transition hover:bg-base-200/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                        title={`在新标签页打开 ${item.title}`}
-                        aria-label={`在新标签页打开 ${item.title}`}
-                      >
-                        <div className="block truncate text-sm text-base-content" title={item.title}>
-                          {item.title}
-                        </div>
-                        <div className="block truncate text-xs text-base-content/60" title={item.url}>
-                          {item.url}
-                        </div>
-                      </a>
-                    </div>
-                    {!bulkMode ? (
-                      <div className="inline-flex items-center gap-2 whitespace-nowrap">
-                        <button type="button" className="btn btn-link btn-sm px-1" onClick={() => openFormModal("edit", item)}>
-                          编辑
-                        </button>
-                        <button type="button" className="btn btn-link btn-sm px-1 text-error" onClick={() => openDeleteModal(item)}>
-                          删除
-                        </button>
-                      </div>
-                    ) : null}
+              canSortBookmarks ? (
+                <DragDropProvider onDragEnd={onSortEnd}>
+                  <div className="flex flex-col">
+                    {bookmarkLinks.map((item, index) => (
+                      <SortableBookmarkRow
+                        key={item.id}
+                        item={item}
+                        index={index}
+                        selected={selectedIds.has(item.id)}
+                        sortDisabled={false}
+                        onToggleSelected={() => toggleSelected(item.id)}
+                        onEdit={() => openFormModal("edit", item)}
+                        onDelete={() => openDeleteModal(item)}
+                      />
+                    ))}
                   </div>
-                ))}
-              </div>
+                </DragDropProvider>
+              ) : (
+                <div className="flex flex-col">
+                  {filteredBookmarkLinks.map((item, index) => (
+                    <BookmarkRow
+                      key={item.id}
+                      item={item}
+                      index={index}
+                      bulkMode={bulkMode}
+                      selected={selectedIds.has(item.id)}
+                      showHandle={!bulkMode}
+                      sortDisabled={hasActiveFilter || bookmarkLinks.length < 2}
+                      onToggleSelected={() => toggleSelected(item.id)}
+                      onEdit={() => openFormModal("edit", item)}
+                      onDelete={() => openDeleteModal(item)}
+                    />
+                  ))}
+                </div>
+              )
             ) : (
               <div className="py-3 text-xs text-base-content/60">没有匹配的书签，请调整筛选条件</div>
             )}
@@ -449,7 +473,9 @@ export default function BookmarksPage() {
         confirmText={formMode === "add" ? "添加" : "保存"}
         disableConfirm={!canSubmit}
         onClose={closeFormModal}
-        onConfirm={onSaveForm}
+        onConfirm={() => {
+          void onSaveForm();
+        }}
       >
         <input className="input w-full" value={formTitle} placeholder="名称，如：GitHub" onChange={(event) => setFormTitle(event.target.value)} />
         <input className="input w-full" value={formUrl} placeholder="链接，如：github.com" onChange={(event) => setFormUrl(event.target.value)} />
@@ -461,7 +487,9 @@ export default function BookmarksPage() {
         open={confirmModalOpen}
         confirmText="删除"
         onClose={closeDeleteModal}
-        onConfirm={onConfirmDelete}
+        onConfirm={() => {
+          void onConfirmDelete();
+        }}
       />
       <ConfirmModal
         title="批量删除书签"
@@ -470,8 +498,118 @@ export default function BookmarksPage() {
         open={bulkConfirmModalOpen}
         confirmText="删除所选"
         onClose={closeBulkDeleteModal}
-        onConfirm={onConfirmBulkDelete}
+        onConfirm={() => {
+          void onConfirmBulkDelete();
+        }}
       />
     </div>
+  );
+}
+
+interface BookmarkRowProps {
+  item: BookmarkLink;
+  index: number;
+  bulkMode: boolean;
+  selected: boolean;
+  showHandle: boolean;
+  sortDisabled: boolean;
+  dragging?: boolean;
+  onToggleSelected: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  rowRef?: (element: HTMLDivElement | null) => void;
+  handleRef?: (element: HTMLButtonElement | null) => void;
+}
+
+function BookmarkRow(props: BookmarkRowProps) {
+  const { item, index, bulkMode, selected, showHandle, sortDisabled, dragging = false, onToggleSelected, onEdit, onDelete, rowRef, handleRef } = props;
+
+  return (
+    <div ref={rowRef} className={`flex cursor-default justify-between gap-3 py-2.5 transition ${index > 0 ? "border-t border-base-200" : ""} ${dragging ? "rounded-xl bg-base-200/80 shadow-sm" : ""}`}>
+      <div className="flex w-full min-w-0 items-center gap-3">
+        {bulkMode ? <input className="checkbox checkbox-sm mt-0.5 shrink-0" type="checkbox" checked={selected} onChange={onToggleSelected} /> : null}
+        {showHandle ? (
+          <button
+            ref={handleRef}
+            type="button"
+            className={`btn btn-ghost btn-xs h-8 min-h-8 w-8 min-w-8 shrink-0 rounded-lg px-0 text-base-content/55 ${
+              sortDisabled ? "cursor-not-allowed opacity-45" : "cursor-grab active:cursor-grabbing"
+            }`}
+            aria-label={sortDisabled ? `当前不可拖拽排序 ${item.title}` : `拖拽排序 ${item.title}`}
+            aria-disabled={sortDisabled}
+            title={sortDisabled ? "筛选中不可排序" : `拖拽排序 ${item.title}`}
+            onClick={sortDisabled ? (event) => event.preventDefault() : undefined}
+          >
+            <GripVertical className="h-4 w-4" aria-hidden="true" />
+          </button>
+        ) : null}
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noreferrer"
+          className="w-full min-w-0 rounded-md px-1 py-1 text-left transition hover:bg-base-200/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          title={`在新标签页打开 ${item.title}`}
+          aria-label={`在新标签页打开 ${item.title}`}
+        >
+          <div className="block truncate text-sm text-base-content" title={item.title}>
+            {item.title}
+          </div>
+          <div className="block truncate text-xs text-base-content/60" title={item.url}>
+            {item.url}
+          </div>
+        </a>
+      </div>
+      {!bulkMode ? (
+        <div className="inline-flex items-center gap-2 whitespace-nowrap">
+          <button type="button" className="btn btn-link btn-sm px-1" onClick={onEdit}>
+            编辑
+          </button>
+          <button type="button" className="btn btn-link btn-sm px-1 text-error" onClick={onDelete}>
+            删除
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface SortableBookmarkRowProps {
+  item: BookmarkLink;
+  index: number;
+  selected: boolean;
+  sortDisabled: boolean;
+  onToggleSelected: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+
+function SortableBookmarkRow(props: SortableBookmarkRowProps) {
+  const { item, index, selected, sortDisabled, onToggleSelected, onEdit, onDelete } = props;
+  const { isDragging, isDragSource, isDropping, ref, handleRef } = useSortable({
+    id: item.id,
+    index,
+    disabled: sortDisabled,
+    collisionDetector: directionBiased,
+    transition: {
+      duration: 220,
+      easing: "cubic-bezier(0.25, 1, 0.5, 1)"
+    }
+  });
+
+  return (
+    <BookmarkRow
+      item={item}
+      index={index}
+      bulkMode={false}
+      selected={selected}
+      showHandle
+      sortDisabled={sortDisabled}
+      dragging={isDragging || isDragSource || isDropping}
+      onToggleSelected={onToggleSelected}
+      onEdit={onEdit}
+      onDelete={onDelete}
+      rowRef={ref as (element: HTMLDivElement | null) => void}
+      handleRef={handleRef as (element: HTMLButtonElement | null) => void}
+    />
   );
 }

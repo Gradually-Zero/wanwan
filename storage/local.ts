@@ -18,17 +18,3 @@ export function getBIS() {
 }
 
 export const commonSwitchKey = "newtab.switch.common";
-export const commonLinksKey = "newtab.common.links";
-export const bookmarksLinksKey = "extension.bookmarks.links";
-
-export interface CommonLink {
-  id: string;
-  title: string;
-  url: string;
-}
-
-export interface BookmarkLink {
-  id: string;
-  title: string;
-  url: string;
-}

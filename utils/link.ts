@@ -1,4 +1,4 @@
-import type { BookmarkLink, CommonLink } from "~storage/local";
+import type { BookmarkLink, CommonLink } from "~indexedDB/LinksDB";
 
 type LinkRecord = CommonLink | BookmarkLink;
 

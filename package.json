@@ -15,20 +15,20 @@
     "@dnd-kit/react": "0.3.2",
     "@plasmohq/storage": "^1.15.0",
     "ahooks": "^3.9.7",
-    "dexie": "^4.4.1",
-    "lucide-react": "^1.7.0",
+    "dexie": "^4.4.2",
+    "lucide-react": "^1.8.0",
     "plasmo": "0.90.5",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.2.2",
-    "@types/chrome": "0.1.38",
-    "@types/node": "25.5.0",
+    "@types/chrome": "0.1.40",
+    "@types/node": "25.5.2",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "daisyui": "^5.5.19",
-    "postcss": "^8.5.8",
+    "postcss": "^8.5.9",
     "prettier": "3.8.1",
     "tailwindcss": "4.2.2",
     "typescript": "6.0.2"

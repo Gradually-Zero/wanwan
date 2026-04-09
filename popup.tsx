@@ -1,8 +1,9 @@
 import { Bookmark } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { commonSwitchKey, local } from "~storage/local";
 import { createCommonId, normalizeUrl } from "~utils/link";
-import { bookmarksLinksKey, commonLinksKey, commonSwitchKey, local } from "~storage/local";
-import type { BookmarkLink, CommonLink } from "~storage/local";
+import { useBookmarkLinks, useCommonLinks } from "~hooks/useLinks";
+import { addBookmarkLink, addCommonLink, removeBookmarkLink, removeCommonLink } from "~indexedDB/LinksDB";
 import "./styles/main.css";
 
 type NoticeType = "success" | "error" | "warning" | "info";
@@ -35,36 +36,24 @@ export default function Popup() {
   const [bookmarkDeleting, setBookmarkDeleting] = useState(false);
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
-  const [commonLinks, setCommonLinks] = useState<CommonLink[]>([]);
-  const [bookmarkLinks, setBookmarkLinks] = useState<BookmarkLink[]>([]);
   const [notice, setNotice] = useState<Notice>();
+  const { items: commonLinks, loading: commonLinksLoading } = useCommonLinks();
+  const { items: bookmarkLinks, loading: bookmarkLinksLoading } = useBookmarkLinks();
   const normalizedUrl = useMemo(() => normalizeUrl(url), [url]);
   const existingCommon = useMemo(() => commonLinks.find((item) => item.url === normalizedUrl), [commonLinks, normalizedUrl]);
   const existingBookmark = useMemo(() => bookmarkLinks.find((item) => item.url === normalizedUrl), [bookmarkLinks, normalizedUrl]);
   const canSubmitCommon = useMemo(() => title.trim().length > 0 && url.trim().length > 0, [title, url]);
   const canSubmitBookmark = useMemo(() => title.trim().length > 0 && url.trim().length > 0, [title, url]);
-  const inputsDisabled = loadingTab || commonSaving || commonDeleting || bookmarkSaving || bookmarkDeleting;
+  const linksLoading = commonLinksLoading || bookmarkLinksLoading;
+  const inputsDisabled = loadingTab || linksLoading || commonSaving || commonDeleting || bookmarkSaving || bookmarkDeleting;
 
   const setNoticeText = (type: NoticeType, text: string) => {
     setNotice({ type, text });
   };
 
-  const loadCommonLinks = async () => {
-    const list = (await local.get<CommonLink[]>(commonLinksKey)) ?? [];
-    setCommonLinks(list);
-    return list;
-  };
-
-  const loadBookmarkLinks = async () => {
-    const list = (await local.get<BookmarkLink[]>(bookmarksLinksKey)) ?? [];
-    setBookmarkLinks(list);
-    return list;
-  };
-
   const hydrateCurrentTab = async () => {
     setLoadingTab(true);
     try {
-      await Promise.all([loadCommonLinks(), loadBookmarkLinks()]);
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       const tabUrl = tab?.url?.trim();
       if (!tabUrl) {
@@ -103,25 +92,16 @@ export default function Popup() {
 
     setCommonSaving(true);
     try {
-      const list = await loadCommonLinks();
-      const existingIndex = list.findIndex((item) => item.url === nextUrl);
-
-      if (existingIndex >= 0) {
+      if (commonLinks.some((item) => item.url === nextUrl)) {
         return;
       }
 
-      const nextList: CommonLink[] = [
-        ...list,
-        {
-          id: createCommonId(),
-          title: nextTitle,
-          url: nextUrl
-        }
-      ];
-
-      await local.set(commonLinksKey, nextList);
+      await addCommonLink({
+        id: createCommonId(),
+        title: nextTitle,
+        url: nextUrl
+      });
       await local.set(commonSwitchKey, true);
-      setCommonLinks(nextList);
       setNoticeText("success", "已添加到常用");
     } catch {
       setNoticeText("error", "保存失败，请稍后重试");
@@ -137,9 +117,7 @@ export default function Popup() {
 
     setCommonDeleting(true);
     try {
-      const nextList = commonLinks.filter((item) => item.id !== existingCommon.id);
-      await local.set(commonLinksKey, nextList);
-      setCommonLinks(nextList);
+      await removeCommonLink(existingCommon.id);
       setNoticeText("success", "已从常用中删除");
     } catch {
       setNoticeText("error", "删除失败，请稍后重试");
@@ -164,24 +142,15 @@ export default function Popup() {
 
     setBookmarkSaving(true);
     try {
-      const list = await loadBookmarkLinks();
-      const existingIndex = list.findIndex((item) => item.url === nextUrl);
-
-      if (existingIndex >= 0) {
+      if (bookmarkLinks.some((item) => item.url === nextUrl)) {
         return;
       }
 
-      const nextList: BookmarkLink[] = [
-        ...list,
-        {
-          id: createCommonId(),
-          title: nextTitle,
-          url: nextUrl
-        }
-      ];
-
-      await local.set(bookmarksLinksKey, nextList);
-      setBookmarkLinks(nextList);
+      await addBookmarkLink({
+        id: createCommonId(),
+        title: nextTitle,
+        url: nextUrl
+      });
       setNoticeText("success", "已添加到书签");
     } catch {
       setNoticeText("error", "保存失败，请稍后重试");
@@ -197,9 +166,7 @@ export default function Popup() {
 
     setBookmarkDeleting(true);
     try {
-      const nextList = bookmarkLinks.filter((item) => item.id !== existingBookmark.id);
-      await local.set(bookmarksLinksKey, nextList);
-      setBookmarkLinks(nextList);
+      await removeBookmarkLink(existingBookmark.id);
       setNoticeText("success", "已从书签中删除");
     } catch {
       setNoticeText("error", "删除失败，请稍后重试");

@@ -2,8 +2,8 @@ import { useRequest } from "ahooks";
 import { useStorage } from "@plasmohq/storage/hook";
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { imageDb } from "~indexedDB/ImageDB";
-import { commonLinksKey, commonSwitchKey, getBIS, local } from "~storage/local";
-import type { CommonLink } from "~storage/local";
+import { useCommonLinks } from "~hooks/useLinks";
+import { commonSwitchKey, getBIS, local } from "~storage/local";
 import "./styles/main.css";
 
 const Background = lazy(() => import("~components/Background").then((module) => ({ default: module.Background })));
@@ -15,7 +15,7 @@ function IndexNewtab() {
   const [settingDrawerOpen, setSettingDrawerOpen] = useState(false);
   const [sortModeOpen, setSortModeOpen] = useState(false);
   const [commonSwitch] = useStorage({ instance: local, key: commonSwitchKey }, false);
-  const [commonLinks] = useStorage<CommonLink[]>({ instance: local, key: commonLinksKey }, []);
+  const { items: commonLinks } = useCommonLinks();
   const currentImageObjectUrlRef = useRef<string | null>(null);
   const settingDrawerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { refresh } = useRequest(getImage, {
@@ -111,7 +111,7 @@ function IndexNewtab() {
       >
         {commonSwitch ? (
           <div className="common-links-grid">
-            {(commonLinks ?? []).map((item) => (
+            {commonLinks.map((item) => (
               <a
                 key={item.id}
                 href={item.url}
